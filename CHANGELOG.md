@@ -3,6 +3,10 @@
 What changed in each release, newest first. Every release is a git tag (`v0.1.0`) and a tarball on
 the [download page](https://api-batch.software.nuilab.org/download/).
 
+## 0.1.1 — 2026-11-08
+
+- Adds `install.sh`, which the 0.1.0 tarball was missing.
+
 ## 0.1.0 — 2026-11-08
 
 First release.

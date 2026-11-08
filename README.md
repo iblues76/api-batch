@@ -7,7 +7,7 @@ You give it a document and the questions. It tells you the worst case the run ca
 over the budget you set, and keeps a ledger per project. Projects have names, so you never type paths
 twice, and the same commands work on another machine over SSH.
 
-**Version 0.1.0.** One Python file, no dependencies beyond the provider SDK (it creates its own
+**Version 0.1.1.** One Python file, no dependencies beyond the provider SDK (it creates its own
 virtual environment on first run). The only provider today is Anthropic (Claude); the provider sits
 behind a small class so another can be added. Works on macOS and Linux with Python 3.10+.
 
