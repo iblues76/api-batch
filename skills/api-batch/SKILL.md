@@ -65,6 +65,8 @@ per request), `runs/ledger.csv` (one line per batch). `api-batch show <proj>` pr
 - Costs are list-price estimates; the provider console is ground truth. A cancelled batch may still
   bill requests that had started.
 - `collect` refuses to run twice on the same run; use `--run` to collect an older one.
+- Submitted something by mistake? `api-batch cancel <proj>` right away (free). Started requests may
+  still bill; `--run <ts> collect` after it ends records whatever ran.
 - A `.docx` with pictures pandoc cannot extract reports fewer `+N images` than expected; add those
   as PNG by hand.
 - Paths in `config set` are stored with `~` so they carry across machines with different home dirs.

@@ -3,6 +3,13 @@
 What changed in each release, newest first. Every release is a git tag (`v0.1.0`) and a tarball on
 the [download page](https://api-batch.software.nuilab.org/download/).
 
+## 0.2.1 — 2026-11-08
+
+- **`cancel <proj>`** (or `--run <ts>`): cancel the latest batch while it is still processing. The
+  run folder is renamed `…-canceled` and `ls` shows it. Requests that had already started may still
+  finish and bill; `--run <ts> collect` records them once the batch ends. Refuses on a run that is
+  already collected or ended.
+
 ## 0.2.0 — 2026-11-08
 
 - **`submit --now`** (and `synth --now`, `estimate --now`): run through the standard endpoint

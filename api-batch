@@ -9,6 +9,7 @@
   api-batch submit   <proj> [same opts]          # BILLS; refuses over budget, warns over target
                                                  #   --now = standard tier: runs immediately, 2x the price
   api-batch status   <proj>                      # last batch: state, counts, minutes
+  api-batch cancel   <proj>                      # cancel the last batch (or --run <ts>); started requests may still bill
   api-batch collect  <proj>                      # answers -> runs/<ts>/qNN.md + usage.csv + ledger
   api-batch show     <proj> [q03]                # print the latest run's answers (or one)
   api-batch synth    <proj> "combine prompt"     # round 2: one request fed all collected answers
@@ -91,6 +92,10 @@ class Claude:
         b = self.c.messages.batches.retrieve(bid)
         rc = b.request_counts
         return b.processing_status, rc.succeeded, rc.errored + rc.expired + rc.canceled, rc.processing, b.ended_at
+
+    def cancel(self, bid):
+        b = self.c.messages.batches.cancel(bid)
+        return b.processing_status, b.request_counts
 
     def results(self, bid):
         for r in self.c.messages.batches.results(bid):
@@ -386,6 +391,26 @@ def cmd_status(a):
           f"done {ok} failed {bad} processing {proc}")
 
 
+def cmd_cancel(a):
+    p = proj(a.proj)
+    d, meta = last_run(p)
+    if meta.get("kind", "").endswith("now"):
+        die("a --now run is synchronous; stop it with Ctrl-C")
+    if (d / "usage.csv").exists():
+        die(f"already collected: {d.name}")
+    pr = provider(p)
+    st, *_ = pr.status(meta["id"])
+    if st == "ended":
+        die(f"{meta['id']} already ended — collect it instead (ended requests are billed)")
+    st, rc = pr.cancel(meta["id"])
+    nd = d.with_name(d.name + "-canceled") if not d.name.endswith("-canceled") else d
+    if nd != d:
+        d.rename(nd)
+    print(f"{p['name']} {meta['id']} {st} | processing {rc.processing} succeeded {rc.succeeded} canceled {rc.canceled}")
+    print(f"run folder -> {nd.relative_to(p['path'])}/ ; requests already running may finish and bill — "
+          f"`api-batch --run {nd.name[:15]} collect {p['name']}` once ended records them")
+
+
 def cmd_collect(a):
     p = proj(a.proj)
     d, meta = last_run(p)
@@ -445,6 +470,8 @@ def cmd_ls(a):
             when = datetime.datetime.fromtimestamp(meta["submitted"]).strftime("%m-%d %H:%M")
             if (r[-1] / "usage.csv").exists():
                 st = "collected" + (" (now)" if meta.get("kind", "").endswith("now") else "")
+            elif r[-1].name.endswith("-canceled") or r[-1].name.endswith("-canceled-duplicate"):
+                st = "canceled"
             else:
                 try:
                     s, ok, bad, proc, _ = provider(p).status(meta["id"])
@@ -582,7 +609,7 @@ def main():
     s = sp.add_parser("questions"); s.add_argument("proj", **P)
     for n in ("estimate", "submit"):
         s = sp.add_parser(n); s.add_argument("proj", **P); run_opts(s)
-    for n in ("status", "collect"):
+    for n in ("status", "collect", "cancel"):
         s = sp.add_parser(n); s.add_argument("proj", **P)
     s = sp.add_parser("show"); s.add_argument("proj", **P); s.add_argument("qid", nargs="?", help="q01… (default: all answers of the run)")
     s = sp.add_parser("synth"); s.add_argument("proj", **P); s.add_argument("prompt"); run_opts(s)

@@ -57,6 +57,12 @@ Run options:
 
 **`status <proj>`** — state of the latest batch: `in_progress` / `ended`, counts, minutes since submit.
 
+**`cancel <proj>`** — cancel the latest batch (or `--run <ts>`) while it is `in_progress`. The run
+folder becomes `…-canceled`. The provider stops requests that have not started; ones already running
+may finish and are billed, so once the batch reports `ended`, `--run <ts> collect` records them in
+the ledger. Refuses on a run that is already collected or ended, and on a `--now` run (that one is a
+local loop: Ctrl-C).
+
 **`collect <proj>`** — once ended: write `qNN.md` per succeeded request, `usage.csv` (status, stop
 reason, tokens in/out/cache, web searches, estimated cost), append one line to `runs/ledger.csv`, and
 send a notification if `notify.url` is configured. Lists requests that failed, were refused, or were cut

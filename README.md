@@ -7,7 +7,7 @@ You give it a document and the questions. It tells you the worst case the run ca
 over the budget you set, and keeps a ledger per project. Projects have names, so you never type paths
 twice, and the same commands work on another machine over SSH.
 
-**Version 0.2.0.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
+**Version 0.2.1.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
 virtual environment on first run). The only provider today is Anthropic (Claude); the provider sits
 behind a small class so another can be added. Works on macOS and Linux with Python 3.10+.
 
@@ -63,6 +63,7 @@ while its batch runs and `!` when it has ended and is waiting for `collect`.
 | `submit <proj> [opts]` | **yes** | run `estimate`, then submit the batch if it fits the budget |
 | `submit <proj> --now [opts]` | **yes** | same, but through the standard endpoint right now, at full price |
 | `status <proj>` | no | state of the latest batch |
+| `cancel <proj>` | no | cancel the latest batch while it is still processing (started requests may still bill) |
 | `collect <proj>` | no | fetch answers, write `usage.csv`, append the ledger |
 | `show <proj> [qNN]` | no | print the latest run's answers (or one) |
 | `synth <proj> "prompt" [opts]` | **yes** | one request fed every collected answer |
