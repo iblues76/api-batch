@@ -3,6 +3,15 @@
 What changed in each release, newest first. Every release is a git tag (`v0.1.0`) and a tarball on
 the [download page](https://api-batch.software.nuilab.org/download/).
 
+## 0.2.0 — 2026-11-08
+
+- **`submit --now`** (and `synth --now`, `estimate --now`): run through the standard endpoint
+  immediately at the normal price instead of the batch queue. Same budget guard, same `usage.csv`,
+  same ledger (`kind: now`), so batch and standard runs of the same questions sit side by side.
+- **`api-cost`**, a second command: exact input tokens and the price for any prompt or set of files,
+  standard or batch, from the free token counter. Never sends a real request.
+- `install.sh` installs both commands.
+
 ## 0.1.1 — 2026-11-08
 
 - Adds `install.sh`, which the 0.1.0 tarball was missing.

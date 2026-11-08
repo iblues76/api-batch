@@ -32,6 +32,13 @@ Web search is the one thing the estimate cannot see: each search returns results
 tokens, and their size depends on the pages. Pilot two or three questions and read the real cost from
 `collect` before scaling up.
 
+## Batch or standard
+
+`--now` runs the same requests through the standard endpoint, right away, at twice the batch price.
+The estimate and the guard use the standard rate when you pass it, and the ledger line says
+`kind: now`. Running a set of questions once each way is the cleanest measurement of what the batch
+discount buys you: same input, two costs, and the wait in the `minutes` column.
+
 ## The ledger
 
 `collect` computes the cost of each succeeded request from its reported usage — input, output, cache

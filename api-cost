@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""api-cost — what would this prompt cost? Exact input tokens (free endpoint), output as a ceiling.
+
+  api-cost prompt.md                         # tokens + cost at the standard rate
+  api-cost prompt.md doc.pdf shot.png        # several inputs, one request
+  api-cost --model sonnet --max-tokens 4000 prompt.md
+  api-cost --compare prompt.md               # standard vs batch side by side
+  echo "text" | api-cost -                   # from stdin
+
+Never sends a real request. The provider's token counter is free; output tokens cannot be known in
+advance, so the output side is shown as the ceiling set by --max-tokens.
+Key: <key_dir>/<keyname>.key, mode 600, read at run time, never printed (shares api-batch's config:
+~/.config/api-batch/config.json, key_dir default ~/.config/api-batch/keys).
+"""
+import argparse, base64, json, mimetypes, os, shutil, subprocess, sys
+from pathlib import Path
+
+VENV = Path.home() / ".local/share/api-batch/venv"
+if sys.prefix != str(VENV):
+    py = VENV / "bin/python"
+    if not py.exists():
+        VENV.parent.mkdir(parents=True, exist_ok=True)
+        uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
+        if Path(uv).exists():
+            subprocess.run([uv, "venv", "-q", str(VENV)], check=True)
+            subprocess.run([uv, "pip", "install", "-q", "--python", str(py), "anthropic"], check=True)
+        else:
+            subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
+            subprocess.run([str(py), "-m", "pip", "install", "-q", "anthropic"], check=True)
+    os.execv(str(py), [str(py), os.path.abspath(__file__), *sys.argv[1:]])
+
+import anthropic  # noqa: E402
+
+ALIASES = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-1"}
+PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0),
+          "claude-haiku-5-5": (0.10, 0.50), "claude-fable-5-1": (10.0, 50.0)}   # USD per MTok, in/out
+CFG = Path.home() / ".config/api-batch/config.json"
+
+
+def die(m):
+    print(f"api-cost: {m}", file=sys.stderr); sys.exit(1)
+
+
+def key_file(name):
+    if "/" in name:
+        return Path(name).expanduser()
+    kd = "~/.config/api-batch/keys"
+    if CFG.is_file():
+        kd = json.loads(CFG.read_text()).get("key_dir", kd)
+    return Path(kd).expanduser() / f"{name}.key"
+
+
+def block(path):
+    if path == "-":
+        return "stdin", {"type": "text", "text": sys.stdin.read()}
+    f = Path(path).expanduser()
+    if not f.is_file():
+        die(f"not a file: {f}")
+    ext = f.suffix.lower()
+    if ext == ".pdf":
+        return f.name, {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                                        "data": base64.b64encode(f.read_bytes()).decode()}}
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        return f.name, {"type": "image", "source": {"type": "base64", "media_type": mimetypes.guess_type(f.name)[0] or "image/png",
+                                                     "data": base64.b64encode(f.read_bytes()).decode()}}
+    return f.name, {"type": "text", "text": f.read_text(errors="replace")}
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="api-cost", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("inputs", nargs="+", help="files (.md .txt .pdf .png .jpg) or - for stdin")
+    ap.add_argument("--model", default="opus")
+    ap.add_argument("--max-tokens", type=int, default=16000)
+    ap.add_argument("--compare", action="store_true", help="also show the batch-tier price")
+    cfg_default = json.loads(CFG.read_text()).get("default_key") if CFG.is_file() else None
+    ap.add_argument("--keyname", default=os.environ.get("API_COST_KEY") or cfg_default or "default",
+                    help="key file name in key_dir (default: $API_COST_KEY, then api-batch config default_key)")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    model = ALIASES.get(a.model, a.model)
+    if model not in PRICES:
+        die(f"unknown model {model}; known: {', '.join(PRICES)} (or aliases {', '.join(ALIASES)})")
+    kf = key_file(a.keyname)
+    if not kf.is_file():
+        die(f"key file not found: {kf}  (--keyname NAME, or API_COST_KEY=NAME)")
+    c = anthropic.Anthropic(api_key=kf.read_text().strip())
+
+    parts = [block(x) for x in a.inputs]
+    count = lambda blocks: c.messages.count_tokens(model=model, messages=[{"role": "user", "content": blocks}]).input_tokens
+    total = count([b for _, b in parts])
+    per = {n: count([b]) for n, b in parts} if len(parts) > 1 else {parts[0][0]: total}
+    i, o = PRICES[model]
+    std_in, std_out = total * i / 1e6, a.max_tokens * o / 1e6
+    if a.json:
+        print(json.dumps({"model": model, "input_tokens": total, "per_input": per, "max_output_tokens": a.max_tokens,
+                          "standard_usd": {"input": round(std_in, 4), "output_max": round(std_out, 4), "total_max": round(std_in + std_out, 4)},
+                          "batch_usd": {"input": round(std_in / 2, 4), "output_max": round(std_out / 2, 4), "total_max": round((std_in + std_out) / 2, 4)}}, indent=1))
+        return
+    detail = " · ".join(f"{n} {t:,}" for n, t in per.items()) if len(per) > 1 else ""
+    print(f"input {total:,} tok{' (' + detail + ')' if detail else ''}")
+    print(f"model {model} | max output {a.max_tokens:,} tok")
+    print(f"standard: input ${std_in:.4f} + output ≤ ${std_out:.2f} = ≤ ${std_in + std_out:.2f}")
+    if a.compare:
+        print(f"batch:    input ${std_in / 2:.4f} + output ≤ ${std_out / 2:.2f} = ≤ ${(std_in + std_out) / 2:.2f}   (50% off, up to 24 h)")
+    print("(input is exact; output is the ceiling set by --max-tokens; thinking counts as output)")
+
+
+if __name__ == "__main__":
+    main()

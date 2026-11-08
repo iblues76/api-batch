@@ -51,6 +51,7 @@ Run options:
 | `--effort` | `medium` | `low` `medium` `high` `xhigh` `max` — mostly moves output (thinking) tokens |
 | `--max-tokens` | `16000` | per-answer ceiling; also the worst-case assumption |
 | `--web` | `0` | allow up to N web searches per question (server-side tool); results add input tokens the estimate cannot see |
+| `--now` | off | standard tier: run each request immediately through the normal endpoint at full price (2× batch); results land at once, no `collect` needed |
 
 ## Results
 
@@ -79,3 +80,11 @@ each machine needs its own.
 `install_path` (default `~/.local/bin/api-batch`), `notify.url` and `notify.token_file` (an
 ntfy-style endpoint that gets one line per collected batch). Paths under your home are stored with `~`
 so they carry to machines with a different home directory.
+
+## api-cost
+
+**`api-cost [--model M] [--max-tokens N] [--compare] [--keyname K] [--json] <file>… | -`**
+Exact input token count (per file when several) and the price at the standard rate, with `--compare`
+also at the batch rate. Output is a ceiling (`--max-tokens`), since the answer's length is unknown
+until it exists. Uses the free token-counting endpoint only. Shares `key_dir` with api-batch;
+`API_COST_KEY=<name>` sets the default key.

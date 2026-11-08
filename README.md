@@ -7,7 +7,7 @@ You give it a document and the questions. It tells you the worst case the run ca
 over the budget you set, and keeps a ledger per project. Projects have names, so you never type paths
 twice, and the same commands work on another machine over SSH.
 
-**Version 0.1.1.** One Python file, no dependencies beyond the provider SDK (it creates its own
+**Version 0.2.0.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
 virtual environment on first run). The only provider today is Anthropic (Claude); the provider sits
 behind a small class so another can be added. Works on macOS and Linux with Python 3.10+.
 
@@ -44,6 +44,10 @@ api-batch show     thesis                                # read the latest run's
 api-batch synth    thesis "Combine the answers into a two-page summary"
 ```
 
+Need the answers in minutes rather than hours? `submit --now` runs the same questions through the
+standard endpoint at the normal price (2× the batch rate), with the same budget check and the same
+ledger, so a batch-versus-standard comparison is just two lines in `runs/ledger.csv`.
+
 A batch usually finishes within an hour (the provider allows up to 24). `ls` marks a project `*`
 while its batch runs and `!` when it has ended and is waiting for `collect`.
 
@@ -57,6 +61,7 @@ while its batch runs and `!` when it has ended and is waiting for `collect`.
 | `questions <proj>` | no | list them |
 | `estimate <proj> [opts]` | no | count tokens, print the worst-case cost against the budget |
 | `submit <proj> [opts]` | **yes** | run `estimate`, then submit the batch if it fits the budget |
+| `submit <proj> --now [opts]` | **yes** | same, but through the standard endpoint right now, at full price |
 | `status <proj>` | no | state of the latest batch |
 | `collect <proj>` | no | fetch answers, write `usage.csv`, append the ledger |
 | `show <proj> [qNN]` | no | print the latest run's answers (or one) |
@@ -68,7 +73,21 @@ while its batch runs and `!` when it has ended and is waiting for `collect`.
 
 Options for `estimate` / `submit` / `synth`: `--model opus|sonnet|haiku|fable` (or a full model id),
 `--effort low|medium|high|xhigh|max`, `--max-tokens N` (default 16000), `--web N` (web search, at most
-N searches per question; off by default).
+N searches per question; off by default), `--now` (standard tier instead of batch).
+
+## api-cost: what would this prompt cost?
+
+For anything you are about to send through some other path (a script, a notebook, another tool):
+
+```sh
+api-cost --keyname research prompt.md doc.pdf shot.png     # exact input tokens, per file, and the price
+api-cost --keyname research --compare prompt.md           # standard vs batch side by side
+echo "some text" | api-cost --keyname research -           # from stdin
+```
+
+It uses the provider's free token counter and never sends a real request. Input is exact; output is
+shown as the ceiling set by `--max-tokens`, because nobody knows the answer's length in advance.
+Set `API_COST_KEY=research` to skip `--keyname`.
 
 Global options, before the command: `--dir PATH` or `--pwd` selects the project by folder instead of
 name; `--run <timestamp-prefix>` addresses an earlier run; `-H <host>` runs the command on another

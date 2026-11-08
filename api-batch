@@ -5,8 +5,9 @@
   api-batch add      <proj> <file>...            # .docx -> md (+images) via pandoc; .md/.txt/.pdf/.png copied
   api-batch ask      <proj> "question" ...       # append questions (or: api-batch ask proj -f file.txt)
   api-batch questions <proj>                     # list them
-  api-batch estimate <proj> [--model --effort --max-tokens --web]     # FREE: tokens + worst-case $
+  api-batch estimate <proj> [--model --effort --max-tokens --web --now]   # FREE: tokens + worst-case $
   api-batch submit   <proj> [same opts]          # BILLS; refuses over budget, warns over target
+                                                 #   --now = standard tier: runs immediately, 2x the price
   api-batch status   <proj>                      # last batch: state, counts, minutes
   api-batch collect  <proj>                      # answers -> runs/<ts>/qNN.md + usage.csv + ledger
   api-batch show     <proj> [q03]                # print the latest run's answers (or one)
@@ -16,7 +17,7 @@
   api-batch deploy   <host>...                   # install this script + venv on trusted hosts
   api-batch -H <host> <any command>              # run the command on that host
 
-  api-batch config [show | set <key> <value>]   # key_dir, install_path, notify.url, notify.token_file
+  api-batch config [show | set <key> <value>]   # key_dir, install_path, default_key, notify.url, notify.token_file
 
 Provider: claude (Anthropic) — the only one for now; code sits behind a Provider class.
 Key: <key_dir>/<keyname>.key, mode 600 (key_dir defaults to ~/.config/api-batch/keys). Only the PATH
@@ -47,7 +48,7 @@ import anthropic  # noqa: E402
 CFG = Path.home() / ".config/api-batch/config.json"
 DEFAULTS = {"projects": {}, "hosts": [], "key_dir": "~/.config/api-batch/keys",
             "install_path": "~/.local/bin/api-batch", "notify": {}}
-BATCH = 0.5
+BATCH = 0.5           # batch tier multiplier; --now uses 1.0
 CACHE_WRITE_MULT = 1.25
 WEB_PER_1K = 10.0
 
@@ -106,14 +107,30 @@ class Claude:
                 row["stop"] = getattr(r.result.error, "type", "error")
             yield row
 
-    def cost(self, model, row):
+    def cost(self, model, row, tier=BATCH):
         i, o, cr = self.prices[model]
-        c = BATCH * (row["in"] * i + row["out"] * o + row["cr"] * cr + row["cw"] * i * CACHE_WRITE_MULT) / 1e6
+        c = tier * (row["in"] * i + row["out"] * o + row["cr"] * cr + row["cw"] * i * CACHE_WRITE_MULT) / 1e6
         return c + row["web"] * WEB_PER_1K / 1000
 
-    def worst(self, model, tin, n, max_tokens, web):
+    def worst(self, model, tin, n, max_tokens, web, tier=BATCH):
         i, o, _ = self.prices[model]
-        return BATCH * (tin * i + n * max_tokens * o) / 1e6 + n * web * WEB_PER_1K / 1000
+        return tier * (tin * i + n * max_tokens * o) / 1e6 + n * web * WEB_PER_1K / 1000
+
+    def run_now(self, reqs):
+        """Standard tier: run each request immediately (streaming, so long answers don't time out)."""
+        for cid, p in reqs.items():
+            row = {"id": cid, "status": "succeeded", "stop": "", "text": "", "in": 0, "out": 0, "cr": 0, "cw": 0, "web": 0}
+            try:
+                with self.c.messages.stream(**p) as st:
+                    m = st.get_final_message()
+                u, stu = m.usage, getattr(m.usage, "server_tool_use", None)
+                row.update(stop=m.stop_reason, text="".join(b.text for b in m.content if b.type == "text"),
+                           **{"in": u.input_tokens, "out": u.output_tokens,
+                              "cr": u.cache_read_input_tokens or 0, "cw": u.cache_creation_input_tokens or 0,
+                              "web": (getattr(stu, "web_search_requests", 0) or 0) if stu else 0})
+            except anthropic.APIError as e:
+                row.update(status="errored", stop=type(e).__name__)
+            yield row
 
 
 PROVIDERS = {"claude": Claude}
@@ -280,10 +297,11 @@ def plan(a, p, pr):
         die("no questions (api-batch ask)")
     reqs = {k: pr.params(model, a.effort, a.max_tokens, a.web, shared + [{"type": "text", "text": v}]) for k, v in qs.items()}
     tin = sum(pr.count(r) for r in reqs.values())
-    worst = pr.worst(model, tin, len(reqs), a.max_tokens, a.web)
+    tier = 1.0 if a.now else BATCH
+    worst = pr.worst(model, tin, len(reqs), a.max_tokens, a.web, tier)
     so_far = spent(p)
     print(f"{p['name']}: {len(reqs)} questions | input {tin:,} tok | model {model} effort {a.effort} "
-          f"max_tokens {a.max_tokens}{' web ' + str(a.web) if a.web else ''}")
+          f"max_tokens {a.max_tokens}{' web ' + str(a.web) if a.web else ''} | {'STANDARD tier (now)' if a.now else 'batch tier'}")
     print(f"worst case ${worst:.2f} | spent ${so_far:.2f} | target ${p['target']:.0f} | budget ${p['budget']:.0f}")
     if a.web:
         print("note: --web adds search-result input tokens the estimate cannot see; pilot 2-3 questions first")
@@ -300,7 +318,44 @@ def record_submit(p, bid, model, a, qs, kind="batch"):
     d.mkdir(parents=True)
     (d / "batch.json").write_text(json.dumps({"id": bid, "model": model, "effort": a.effort, "web": a.web,
                                              "kind": kind, "questions": qs, "submitted": time.time()}, indent=1))
-    print(f"submitted {bid} -> {d.relative_to(p['path'])}/   (api-batch status {p['name']} ; collect when ended)")
+    if kind.endswith("now"):
+        print(f"running now -> {d.relative_to(p['path'])}/")
+    else:
+        print(f"submitted {bid} -> {d.relative_to(p['path'])}/   (api-batch status {p['name']} ; collect when ended)")
+    return d
+
+
+def write_results(p, d, meta, rows, pr, ended=None):
+    """qNN.md + usage.csv + ledger line; shared by collect and --now."""
+    tier = 1.0 if meta.get("kind", "").endswith("now") else BATCH
+    total = 0.0
+    for r in rows:
+        if r["status"] == "succeeded":
+            (d / f"{r['id']}.md").write_text(f"# {meta['questions'].get(r['id'], r['id'])}\n\n{r['text']}\n")
+            r["cost_usd"] = round(pr.cost(meta["model"], r, tier), 4)
+            total += r["cost_usd"]
+        else:
+            r["cost_usd"] = 0.0
+        r.pop("text", None)
+    rows.sort(key=lambda r: r["id"])
+    with (d / "usage.csv").open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader(); w.writerows(rows)
+    led = p["path"] / "runs/ledger.csv"
+    new = not led.exists()
+    with led.open("a", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["date", "batch_id", "kind", "model", "requests", "cost_usd", "minutes"])
+        end_ts = ended.timestamp() if ended else time.time()
+        w.writerow([datetime.date.today(), meta["id"], meta.get("kind", "batch"), meta["model"], len(rows),
+                    round(total, 4), round((end_ts - meta["submitted"]) / 60, 1)])
+    bad = [r["id"] for r in rows if r["status"] != "succeeded" or r["stop"] in ("refusal", "max_tokens")]
+    msg = f"{p['name']}: {meta.get('kind', 'batch')} {len(rows)} -> {d.relative_to(p['path'])}/ | ~${total:.2f} this run | ~${spent(p):.2f} total"
+    print(msg)
+    if bad:
+        print("check (failed / refused / cut off):", ", ".join(bad))
+    notify(msg)
 
 
 def cmd_estimate(a):
@@ -312,12 +367,20 @@ def cmd_submit(a):
     p = proj(a.proj)
     pr = provider(p)
     model, qs, reqs = plan(a, p, pr)
+    if a.now:
+        d = record_submit(p, "now-" + datetime.datetime.now().strftime("%H%M%S"), model, a, qs, kind="now")
+        meta = json.loads((d / "batch.json").read_text())
+        write_results(p, d, meta, list(pr.run_now(reqs)), pr)
+        return
     record_submit(p, pr.submit(reqs), model, a, qs)
 
 
 def cmd_status(a):
     p = proj(a.proj)
     d, meta = last_run(p)
+    if meta.get("kind", "").endswith("now"):
+        print(f"{p['name']} {meta['id']} standard-tier run, {'collected' if (d / 'usage.csv').exists() else 'incomplete'}")
+        return
     st, ok, bad, proc, _ = provider(p).status(meta["id"])
     print(f"{p['name']} {meta['id']} {st} after {(time.time() - meta['submitted']) / 60:.0f} min | "
           f"done {ok} failed {bad} processing {proc}")
@@ -332,33 +395,7 @@ def cmd_collect(a):
     st, *_, ended = pr.status(meta["id"])
     if st != "ended":
         die(f"not finished: {st}")
-    rows, total = [], 0.0
-    for r in pr.results(meta["id"]):
-        if r["status"] == "succeeded":
-            (d / f"{r['id']}.md").write_text(f"# {meta['questions'].get(r['id'], r['id'])}\n\n{r['text']}\n")
-            r["cost_usd"] = round(pr.cost(meta["model"], r), 4)
-            total += r["cost_usd"]
-        else:
-            r["cost_usd"] = 0.0
-        r.pop("text")
-        rows.append(r)
-    rows.sort(key=lambda r: r["id"])
-    with (d / "usage.csv").open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0]))
-        w.writeheader(); w.writerows(rows)
-    led, new = p["path"] / "runs/ledger.csv", not (p["path"] / "runs/ledger.csv").exists()
-    with led.open("a", newline="") as f:
-        w = csv.writer(f)
-        if new:
-            w.writerow(["date", "batch_id", "kind", "model", "requests", "cost_usd", "minutes"])
-        mins = (ended.timestamp() - meta["submitted"]) / 60 if ended else 0
-        w.writerow([datetime.date.today(), meta["id"], meta.get("kind", "batch"), meta["model"], len(rows), round(total, 4), round(mins)])
-    bad = [r["id"] for r in rows if r["status"] != "succeeded" or r["stop"] in ("refusal", "max_tokens")]
-    msg = f"{p['name']}: collected {len(rows)} -> {d.relative_to(p['path'])}/ | ~${total:.2f} this batch | ~${spent(p):.2f} total"
-    print(msg)
-    if bad:
-        print("check (failed / refused / cut off):", ", ".join(bad))
-    notify(msg)
+    write_results(p, d, meta, list(pr.results(meta["id"])), pr, ended)
 
 
 def cmd_show(a):
@@ -383,10 +420,16 @@ def cmd_synth(a):
                {"type": "text", "text": a.prompt}]
     req = {"synth": pr.params(model, a.effort, a.max_tokens, 0, content)}
     tin = pr.count(req["synth"])
-    worst = pr.worst(model, tin, 1, a.max_tokens, 0)
-    print(f"synth over {len(answers)} answers | input {tin:,} tok | worst ${worst:.2f} | spent ${spent(p):.2f}")
+    tier = 1.0 if a.now else BATCH
+    worst = pr.worst(model, tin, 1, a.max_tokens, 0, tier)
+    print(f"synth over {len(answers)} answers | input {tin:,} tok | worst ${worst:.2f} | spent ${spent(p):.2f}"
+          f" | {'STANDARD tier (now)' if a.now else 'batch tier'}")
     if spent(p) + worst > p["budget"]:
         die("REFUSED: over budget")
+    if a.now:
+        d = record_submit(p, "now-" + datetime.datetime.now().strftime("%H%M%S"), model, a, {"synth": a.prompt}, kind="synth-now")
+        write_results(p, d, json.loads((d / "batch.json").read_text()), list(pr.run_now(req)), pr)
+        return
     record_submit(p, pr.submit(req), model, a, {"synth": a.prompt}, kind="synth")
 
 
@@ -401,7 +444,7 @@ def cmd_ls(a):
             meta = json.loads((r[-1] / "batch.json").read_text())
             when = datetime.datetime.fromtimestamp(meta["submitted"]).strftime("%m-%d %H:%M")
             if (r[-1] / "usage.csv").exists():
-                st = "collected"
+                st = "collected" + (" (now)" if meta.get("kind", "").endswith("now") else "")
             else:
                 try:
                     s, ok, bad, proc, _ = provider(p).status(meta["id"])
@@ -458,10 +501,10 @@ def cmd_config(a):
         a.value = "~" + a.value[len(home):]   # keep paths portable across machines
     if a.key.startswith("notify."):
         c.setdefault("notify", {})[a.key[7:]] = a.value
-    elif a.key in ("key_dir", "install_path"):
+    elif a.key in ("key_dir", "install_path", "default_key"):
         c[a.key] = a.value
     else:
-        die("settable keys: key_dir, install_path, notify.url, notify.token_file")
+        die("settable keys: key_dir, install_path, default_key, notify.url, notify.token_file")
     save(c)
     print(f"{a.key} = {a.value}")
 
@@ -471,16 +514,21 @@ def cmd_deploy(a):
     dest = c["install_path"]
     rdest = dest.replace("~/", "", 1) if dest.startswith("~/") else dest
     carry = [("key_dir", c["key_dir"]), ("install_path", dest)] + [(f"notify.{k}", v) for k, v in c["notify"].items()]
+    if c.get("default_key"):
+        carry.append(("default_key", c["default_key"]))
+    cost_src = os.path.join(os.path.dirname(me), "api-cost")
+    rcost = os.path.join(os.path.dirname(rdest), "api-cost")
     sets = " && ".join(f"{dest} config set {k} '{v}' >/dev/null" for k, v in carry)
     for h in a.hosts:
         r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", h, f"mkdir -p $(dirname {rdest})"],
                            capture_output=True, text=True)
-        r = r if r.returncode else subprocess.run(["scp", "-q", me, f"{h}:{rdest}"], capture_output=True, text=True)
+        files = [me] + ([cost_src] if os.path.exists(cost_src) else [])
+        r = r if r.returncode else subprocess.run(["scp", "-q", *files, f"{h}:{os.path.dirname(rdest) or '.'}/"], capture_output=True, text=True)
         if r.returncode:
             print(f"{h}: copy failed — {r.stderr.strip()}")
             continue
         r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", h,
-                            f"chmod +x {dest} && {sets} && {dest} ls --no-legend"], capture_output=True, text=True)
+                            f"chmod +x {dest} {rcost} 2>/dev/null; chmod +x {dest} && {sets} && {dest} ls --no-legend"], capture_output=True, text=True)
         print(f"{h}: {'deployed' if r.returncode == 0 else 'deploy FAILED: ' + r.stderr.strip()[-300:]}")
         c = cfg()
         if r.returncode == 0 and h not in c["hosts"]:
@@ -523,6 +571,7 @@ def main():
         s.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
         s.add_argument("--max-tokens", type=int, default=16000)
         s.add_argument("--web", type=int, default=0, help="max web searches per question (0 = off)")
+        s.add_argument("--now", action="store_true", help="standard tier: run immediately at full price (no batch discount)")
 
     s = sp.add_parser("init"); s.add_argument("proj"); s.add_argument("--keyname", required=True)
     s.add_argument("--dir"); s.add_argument("--provider", default="claude", choices=list(PROVIDERS))
