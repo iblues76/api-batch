@@ -14,7 +14,7 @@ Source: https://github.com/iblues76/api-batch. Provider today: Anthropic Message
 api-batch init <proj> --keyname <key> [--dir D] [--budget 50 --target 30]
 api-batch add  <proj> doc.docx|doc.md|img.png        # docx → md + images via pandoc
 api-batch ask  <proj> "question" … | -f file.txt
-api-batch estimate <proj> [--model opus|sonnet|haiku|fable --effort medium --max-tokens 16000 --web N]
+api-batch estimate <proj> [--model opus|sonnet|haiku|fable|fable51 --effort medium --max-tokens 16000 --web N]
 api-batch status | collect | show <proj> [qNN] | ls [--all]
 ```
 `estimate` uses the free token-count endpoint and prints the worst case against the budget. Run it,

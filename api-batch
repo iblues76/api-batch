@@ -23,7 +23,7 @@
 Provider: claude (Anthropic) — the only one for now; code sits behind a Provider class.
 Key: <key_dir>/<keyname>.key, mode 600 (key_dir defaults to ~/.config/api-batch/keys). Only the PATH
 is stored; the value is never printed or put on a command line.
-Model aliases: opus sonnet haiku fable. Costs are list-price ESTIMATES; the provider console is ground truth.
+Model aliases: opus sonnet haiku fable (newest Fable, now 5.2) fable51. Costs are list-price ESTIMATES; the provider console is ground truth.
 """
 import argparse, base64, csv, datetime, json, mimetypes, os, shutil, subprocess, sys, time
 from pathlib import Path
@@ -58,10 +58,12 @@ WEB_PER_1K = 10.0
 class Claude:
     name = "claude"
     aliases = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5",
-               "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-1"}
+               "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-2",  # fable = newest Fable, always
+               "fable51": "claude-fable-5-1"}
     prices = {  # USD per MTok, standard tier
         "claude-opus-5-5": (4.0, 20.0, 0.20), "claude-sonnet-5-5": (2.0, 10.0, 0.20),
-        "claude-haiku-5-5": (0.10, 0.50, 0.01), "claude-fable-5-1": (10.0, 50.0, 0.25)}
+        "claude-haiku-5-5": (0.10, 0.50, 0.01), "claude-fable-5-2": (8.0, 40.0, 0.20),
+        "claude-fable-5-1": (10.0, 50.0, 0.25)}
 
     def __init__(self, key_file):
         p = Path(key_file).expanduser()

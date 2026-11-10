@@ -3,6 +3,13 @@
 What changed in each release, newest first. Every release is a git tag (`v0.1.0`) and a tarball on
 the [download page](https://api-batch.software.nuilab.org/download/).
 
+## 0.2.2 — 2026-11-09
+
+- **`fable` now means Claude Fable 5.2** (`claude-fable-5-2`) in both `api-batch` and `api-cost`.
+  The `fable` alias always points at the newest Fable. Fable 5.2 costs $8 / $40 per million input /
+  output tokens ($4 / $20 in a batch), 20 percent less than Fable 5.1.
+- **`fable51`** keeps Claude Fable 5.1 for anyone who wants to compare or repeat an older run.
+
 ## 0.2.1 — 2026-11-08
 
 - **`cancel <proj>`** (or `--run <ts>`): cancel the latest batch while it is still processing. The

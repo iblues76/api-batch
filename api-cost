@@ -31,9 +31,11 @@ if sys.prefix != str(VENV):
 
 import anthropic  # noqa: E402
 
-ALIASES = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-1"}
+ALIASES = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-2",
+           "fable51": "claude-fable-5-1"}  # fable = newest Fable, always
 PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0),
-          "claude-haiku-5-5": (0.10, 0.50), "claude-fable-5-1": (10.0, 50.0)}   # USD per MTok, in/out
+          "claude-haiku-5-5": (0.10, 0.50), "claude-fable-5-2": (8.0, 40.0),
+          "claude-fable-5-1": (10.0, 50.0)}   # USD per MTok, in/out
 CFG = Path.home() / ".config/api-batch/config.json"
 
 

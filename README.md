@@ -7,7 +7,7 @@ You give it a document and the questions. It tells you the worst case the run ca
 over the budget you set, and keeps a ledger per project. Projects have names, so you never type paths
 twice, and the same commands work on another machine over SSH.
 
-**Version 0.2.1.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
+**Version 0.2.2.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
 virtual environment on first run). The only provider today is Anthropic (Claude); the provider sits
 behind a small class so another can be added. Works on macOS and Linux with Python 3.10+.
 
@@ -72,7 +72,7 @@ while its batch runs and `!` when it has ended and is waiting for `collect`.
 | `deploy <alias>…` | no | copy this script and its settings to other machines |
 | `config [show \| set k v]` | no | `key_dir`, `install_path`, `notify.url`, `notify.token_file` |
 
-Options for `estimate` / `submit` / `synth`: `--model opus|sonnet|haiku|fable` (or a full model id),
+Options for `estimate` / `submit` / `synth`: `--model opus|sonnet|haiku|fable|fable51` (`fable` is always the newest Fable, now 5.2; or a full model id),
 `--effort low|medium|high|xhigh|max`, `--max-tokens N` (default 16000), `--web N` (web search, at most
 N searches per question; off by default), `--now` (standard tier instead of batch).
 

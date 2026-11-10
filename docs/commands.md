@@ -47,7 +47,7 @@ Run options:
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `--model` | `opus` | `opus`, `sonnet`, `haiku`, `fable`, or a full model id |
+| `--model` | `opus` | `opus`, `sonnet`, `haiku`, `fable` (newest Fable, now 5.2), `fable51`, or a full model id |
 | `--effort` | `medium` | `low` `medium` `high` `xhigh` `max` — mostly moves output (thinking) tokens |
 | `--max-tokens` | `16000` | per-answer ceiling; also the worst-case assumption |
 | `--web` | `0` | allow up to N web searches per question (server-side tool); results add input tokens the estimate cannot see |
