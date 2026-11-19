@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """api-batch — amux-style CLI for LLM batch jobs (50% off) with budget guard and cost ledger.
 
-  api-batch init     <proj> --keyname <name> [--dir ~/path] [--budget 50] [--target 30]
+  api-batch init     <proj> --keyname <name> [--provider claude|deepinfra] [--dir ~/path] [--budget 50] [--target 30]
   api-batch add      <proj> <file>...            # .docx -> md (+images) via pandoc; .md/.txt/.pdf/.png copied
   api-batch ask      <proj> "question" ...       # append questions (or: api-batch ask proj -f file.txt)
   api-batch questions <proj>                     # list them
@@ -20,10 +20,18 @@
 
   api-batch config [show | set <key> <value>]   # key_dir, install_path, default_key, notify.url, notify.token_file
 
-Provider: claude (Anthropic) — the only one for now; code sits behind a Provider class.
+Providers (init --provider, fixed per project): claude (Anthropic, default; batch = 50% off) and
+deepinfra (OpenAI-compatible Batch API; batch = 20% off).
 Key: <key_dir>/<keyname>.key, mode 600 (key_dir defaults to ~/.config/api-batch/keys). Only the PATH
 is stored; the value is never printed or put on a command line.
 Model aliases: opus sonnet haiku fable (newest Fable, now 5.2) fable51. Costs are list-price ESTIMATES; the provider console is ground truth.
+
+deepinfra: aliases flash (deepseek-ai/DeepSeek-V4.1-Flash-1017, the default) and dspro
+(deepseek-ai/DeepSeek-V4-Pro-0813); any full DeepInfra model id is accepted too, one model per batch.
+  - key file: <key_dir>/deepinfra.key (init needs no --keyname); only submit/status/collect/cancel read it
+  - text input only (.md/.txt); --effort does not apply (ignored) and --web is refused
+  - estimate is APPROXIMATE: no token-count endpoint, so input = characters / 3
+  - prices come from DeepInfra's public model list; a model with no known price is refused
 """
 import argparse, base64, csv, datetime, json, mimetypes, os, shutil, subprocess, sys, time
 from pathlib import Path
@@ -37,10 +45,10 @@ if sys.prefix != str(VENV) and "--no-venv" not in sys.argv:
         uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
         if Path(uv).exists():
             subprocess.run([uv, "venv", "-q", str(VENV)], check=True)
-            subprocess.run([uv, "pip", "install", "-q", "--python", str(py), "anthropic"], check=True)
+            subprocess.run([uv, "pip", "install", "-q", "--python", str(py), "anthropic", "openai"], check=True)
         else:
             subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
-            subprocess.run([str(py), "-m", "pip", "install", "-q", "anthropic"], check=True)
+            subprocess.run([str(py), "-m", "pip", "install", "-q", "anthropic", "openai"], check=True)
         print(f"api-batch: created {VENV}", file=sys.stderr)
     os.execv(str(py), [str(py), os.path.abspath(__file__), *sys.argv[1:]])
 
@@ -57,6 +65,7 @@ WEB_PER_1K = 10.0
 # ---------- provider layer ----------
 class Claude:
     name = "claude"
+    default_model, default_key, batch, uses_effort, approx = "opus", None, BATCH, True, ""
     aliases = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5",
                "haiku": "claude-haiku-5-5", "fable": "claude-fable-5-2",  # fable = newest Fable, always
                "fable51": "claude-fable-5-1"}
@@ -73,6 +82,9 @@ class Claude:
 
     def model(self, m):
         return self.aliases.get(m, m)
+
+    def unknown(self, model):
+        return f"unknown model {model}"
 
     def params(self, model, effort, max_tokens, web, content):
         p = {"model": model, "max_tokens": max_tokens, "output_config": {"effort": effort},
@@ -140,7 +152,185 @@ class Claude:
             yield row
 
 
-PROVIDERS = {"claude": Claude}
+def need(mod):
+    """Import a provider SDK; an older venv (made before that provider existed) gets it installed once."""
+    import importlib
+    try:
+        return importlib.import_module(mod)
+    except ImportError:
+        if sys.prefix != str(VENV):
+            die(f"python module '{mod}' is missing (pip install {mod})")
+        uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
+        cmd = [uv, "pip", "install", "-q", "--python", sys.executable, mod] if Path(uv).exists() \
+            else [sys.executable, "-m", "pip", "install", "-q", mod]
+        if subprocess.run(cmd).returncode:
+            die(f"could not install '{mod}' into {VENV}")
+        print(f"api-batch: installed {mod} into {VENV}", file=sys.stderr)
+        importlib.invalidate_caches()
+        return importlib.import_module(mod)
+
+
+class DeepInfra:
+    """OpenAI-compatible Batch API: JSONL upload -> batch -> output file. Text only, one model per batch."""
+    name = "deepinfra"
+    base_url = "https://api.deepinfra.com/v1/openai"
+    default_model, default_key, batch, uses_effort = "flash", "deepinfra", 0.8, False   # batch = 20% off list
+    approx = "input tokens are APPROXIMATE (characters / 3; DeepInfra has no token-count endpoint)"
+    aliases = {"flash": "deepseek-ai/DeepSeek-V4.1-Flash-1017",   # newest Flash
+               "dspro": "deepseek-ai/DeepSeek-V4-Pro-0813"}
+    builtin = {  # USD per MTok list price (in, out, cache read); used when the live model list is unreachable
+        "deepseek-ai/DeepSeek-V4.1-Flash-1017": (0.20, 0.60, 0.006),
+        "deepseek-ai/DeepSeek-V4-Pro-0813": (1.30, 2.60, 0.10)}
+    price_cache = VENV.parent / "deepinfra-prices.json"
+
+    def __init__(self, key_file):
+        self.key_file, self._c, self._live, self.prices = Path(key_file).expanduser(), None, None, {}
+
+    @property
+    def c(self):
+        """The client is made on first use: estimate needs no key, everything that talks to the API does."""
+        if self._c is None:
+            p = self.key_file
+            if not p.is_file():
+                die(f"key file not found: {p}  (put the DeepInfra key there, mode 600, on THIS machine)")
+            if p.stat().st_mode & 0o077:
+                die(f"key file {p} is readable by others — chmod 600 it")
+            self._c = need("openai").OpenAI(api_key=p.read_text().strip(), base_url=self.base_url)
+        return self._c
+
+    def _lookup(self, model):
+        """Price of a model: DeepInfra's public model list (no key), else the last price seen, else built in."""
+        if self._live is None:
+            import urllib.request
+            try:
+                req = urllib.request.Request(self.base_url + "/models", headers={"User-Agent": "api-batch"})
+                data = json.loads(urllib.request.urlopen(req, timeout=15).read())["data"]
+                self._live = {m["id"]: (m.get("metadata") or {}).get("pricing") or {} for m in data}
+            except Exception:
+                self._live = {}
+        pr = self._live.get(model, {})
+        if pr.get("input_tokens") is not None and pr.get("output_tokens") is not None:
+            i, o = float(pr["input_tokens"]), float(pr["output_tokens"])
+            price = (round(i, 6), round(o, 6), round(float(pr.get("cache_read_tokens") or i), 6))
+            try:
+                seen = json.loads(self.price_cache.read_text()) if self.price_cache.is_file() else {}
+                seen[model] = price
+                self.price_cache.write_text(json.dumps(seen, indent=1))
+            except OSError:
+                pass
+            return price
+        if self._live:        # the list answered and has no token price for this model: never guess
+            return None
+        try:
+            seen = json.loads(self.price_cache.read_text())
+        except (OSError, ValueError):
+            seen = {}
+        return tuple(seen[model]) if model in seen else self.builtin.get(model)
+
+    def model(self, m):
+        m = self.aliases.get(m, m)
+        if m not in self.prices:
+            price = self._lookup(m)
+            if price:
+                self.prices[m] = price
+        return m
+
+    def unknown(self, model):
+        return (f"no known price for DeepInfra model '{model}' — refusing, so the budget guard stays honest. "
+                f"Use an alias ({', '.join(self.aliases)}) or a full chat-model id from https://deepinfra.com/models")
+
+    def _price(self, model):
+        self.model(model)
+        return self.prices.get(model) or die(self.unknown(model))
+
+    def params(self, model, effort, max_tokens, web, content):
+        if web:
+            die("--web does not apply to the deepinfra provider (no server-side web search)")
+        other = sorted({b["type"] for b in content if b["type"] != "text"})
+        if other:
+            die(f"the deepinfra provider is text only: input/ holds {', '.join(other)} files — keep .md/.txt only")
+        return {"model": model, "max_tokens": max_tokens,     # effort is not sent: it does not apply here
+                "messages": [{"role": "user", "content": "\n\n".join(b["text"] for b in content)}]}
+
+    def count(self, p):
+        return -(-sum(len(m["content"]) for m in p["messages"]) // 3)
+
+    def submit(self, reqs):
+        body = "".join(json.dumps({"custom_id": k, "method": "POST", "url": "/v1/chat/completions", "body": v}) + "\n"
+                       for k, v in reqs.items()).encode()
+        fid = self.c.files.create(file=("api-batch.jsonl", body), purpose="batch").id
+        return self.c.batches.create(input_file_id=fid, endpoint="/v1/chat/completions", completion_window="24h").id
+
+    @staticmethod
+    def _counts(b):
+        rc = b.request_counts
+        total, ok, bad = (rc.total or 0, rc.completed or 0, rc.failed or 0) if rc else (0, 0, 0)
+        return ok, bad, max(total - ok - bad, 0)
+
+    def status(self, bid):
+        b = self.c.batches.retrieve(bid)
+        ok, bad, proc = self._counts(b)
+        if b.status in ("completed", "failed", "expired", "cancelled"):
+            end = b.completed_at or b.cancelled_at or b.expired_at or b.failed_at
+            ended = datetime.datetime.fromtimestamp(end) if end else None
+            if b.status != "completed":
+                print(f"note: DeepInfra batch state is '{b.status}'", file=sys.stderr)
+            return "ended", ok, bad + proc, 0, ended
+        return b.status, ok, bad, proc, None
+
+    def cancel(self, bid):
+        import types
+        b = self.c.batches.cancel(bid)
+        ok, _, proc = self._counts(b)
+        return b.status, types.SimpleNamespace(processing=proc, succeeded=ok, canceled=0)
+
+    @staticmethod
+    def _row(cid, body, error=None):
+        row = {"id": cid, "status": "errored", "stop": "", "text": "", "in": 0, "out": 0, "cr": 0, "cw": 0, "web": 0}
+        if error or not (body or {}).get("choices"):
+            row["stop"] = str((error or {}).get("code") or ((body or {}).get("error") or {}).get("type") or "error")
+            return row
+        ch, u = body["choices"][0], body.get("usage") or {}
+        cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
+        stop = ch.get("finish_reason") or ""
+        row.update(status="succeeded", stop="max_tokens" if stop == "length" else stop,
+                   text=(ch.get("message") or {}).get("content") or "",   # reasoning text is not kept
+                   **{"in": (u.get("prompt_tokens") or 0) - cached, "out": u.get("completion_tokens") or 0, "cr": cached})
+        return row
+
+    def results(self, bid):
+        b = self.c.batches.retrieve(bid)
+        fids = [x for x in (b.output_file_id, b.error_file_id) if x]
+        if not fids:
+            errs = "; ".join(str(e.message) for e in ((b.errors.data if b.errors else None) or [])) or "no detail given"
+            die(f"batch {bid} is '{b.status}' with no output file: {errs}")
+        for fid in fids:
+            for line in self.c.files.content(fid).text.splitlines():
+                if line.strip():
+                    r = json.loads(line)
+                    resp = r.get("response") or {}
+                    yield self._row(r.get("custom_id"), resp.get("body"), r.get("error"))
+
+    def cost(self, model, row, tier=0.8):
+        i, o, cr = self._price(model)
+        return tier * (row["in"] * i + row["out"] * o + row["cr"] * cr) / 1e6
+
+    def worst(self, model, tin, n, max_tokens, web, tier=0.8):
+        i, o, _ = self._price(model)
+        return tier * (tin * i + n * max_tokens * o) / 1e6
+
+    def run_now(self, reqs):
+        """Standard tier: each request immediately through chat completions, at list price."""
+        for cid, p in reqs.items():
+            try:
+                yield self._row(cid, self.c.chat.completions.create(**p, timeout=1800).model_dump())
+            except need("openai").APIError as e:
+                row = self._row(cid, None)
+                row["stop"] = type(e).__name__
+                yield row
+
+
+PROVIDERS = {"claude": Claude, "deepinfra": DeepInfra}
 
 
 # ---------- config / projects ----------
@@ -240,6 +430,7 @@ def questions(p):
 # ---------- commands ----------
 def cmd_init(a):
     c = cfg()
+    a.keyname = a.keyname or PROVIDERS[a.provider].default_key or die("init: --keyname <name> is required")
     if a.proj in c["projects"]:
         die(f"project '{a.proj}' exists")
     d = Path(a.dir or f"~/api-batch-projects/{a.proj}").expanduser()
@@ -296,20 +487,27 @@ def cmd_questions(a):
 
 
 def plan(a, p, pr):
-    model = pr.model(a.model)
+    model = pr.model(a.model or pr.default_model)
     if model not in pr.prices:
-        die(f"unknown model {model}")
+        die(pr.unknown(model))
     shared, qs = shared_blocks(p), questions(p)
     if not qs:
         die("no questions (api-batch ask)")
     reqs = {k: pr.params(model, a.effort, a.max_tokens, a.web, shared + [{"type": "text", "text": v}]) for k, v in qs.items()}
     tin = sum(pr.count(r) for r in reqs.values())
-    tier = 1.0 if a.now else BATCH
+    tier = 1.0 if a.now else pr.batch
     worst = pr.worst(model, tin, len(reqs), a.max_tokens, a.web, tier)
     so_far = spent(p)
-    print(f"{p['name']}: {len(reqs)} questions | input {tin:,} tok | model {model} effort {a.effort} "
+    print(f"{p['name']}: {len(reqs)} questions | input {'~' if pr.approx else ''}{tin:,} tok | model {model} "
+          f"{'effort ' + a.effort + ' ' if pr.uses_effort else ''}"
           f"max_tokens {a.max_tokens}{' web ' + str(a.web) if a.web else ''} | {'STANDARD tier (now)' if a.now else 'batch tier'}")
     print(f"worst case ${worst:.2f} | spent ${so_far:.2f} | target ${p['target']:.0f} | budget ${p['budget']:.0f}")
+    if pr.approx:
+        i, o, _ = pr.prices[model]
+        print(f"note: {pr.approx}; list ${i:g}/${o:g} per MTok in/out"
+              + ("" if a.now else f", batch {round((1 - pr.batch) * 100)}% off") + "; --effort is ignored")
+        if not pr.key_file.is_file():
+            print(f"note: key file MISSING: {pr.key_file} — estimate works without it, submit will not")
     if a.web:
         print("note: --web adds search-result input tokens the estimate cannot see; pilot 2-3 questions first")
     if so_far + worst > p["budget"]:
@@ -334,7 +532,7 @@ def record_submit(p, bid, model, a, qs, kind="batch"):
 
 def write_results(p, d, meta, rows, pr, ended=None):
     """qNN.md + usage.csv + ledger line; shared by collect and --now."""
-    tier = 1.0 if meta.get("kind", "").endswith("now") else BATCH
+    tier = 1.0 if meta.get("kind", "").endswith("now") else pr.batch
     total = 0.0
     for r in rows:
         if r["status"] == "succeeded":
@@ -442,12 +640,12 @@ def cmd_synth(a):
     d, meta = last_run(p)
     answers = sorted(d.glob("q*.md")) or die("nothing collected yet")
     body = "\n\n---\n\n".join(f.read_text() for f in answers)
-    model = pr.model(a.model)
+    model = pr.model(a.model or pr.default_model)
     content = [{"type": "text", "text": f"<answers>\n{body}\n</answers>", "cache_control": {"type": "ephemeral"}},
                {"type": "text", "text": a.prompt}]
     req = {"synth": pr.params(model, a.effort, a.max_tokens, 0, content)}
     tin = pr.count(req["synth"])
-    tier = 1.0 if a.now else BATCH
+    tier = 1.0 if a.now else pr.batch
     worst = pr.worst(model, tin, 1, a.max_tokens, 0, tier)
     print(f"synth over {len(answers)} answers | input {tin:,} tok | worst ${worst:.2f} | spent ${spent(p):.2f}"
           f" | {'STANDARD tier (now)' if a.now else 'batch tier'}")
@@ -596,13 +794,14 @@ def main():
     sp = ap.add_subparsers(dest="cmd", required=True)
 
     def run_opts(s):
-        s.add_argument("--model", default="opus")
-        s.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+        s.add_argument("--model", help="alias or full model id (default: opus; flash on a deepinfra project)")
+        s.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
+                       help="claude only; ignored on a deepinfra project")
         s.add_argument("--max-tokens", type=int, default=16000)
-        s.add_argument("--web", type=int, default=0, help="max web searches per question (0 = off)")
+        s.add_argument("--web", type=int, default=0, help="max web searches per question (0 = off); claude only")
         s.add_argument("--now", action="store_true", help="standard tier: run immediately at full price (no batch discount)")
 
-    s = sp.add_parser("init"); s.add_argument("proj"); s.add_argument("--keyname", required=True)
+    s = sp.add_parser("init"); s.add_argument("proj"); s.add_argument("--keyname", help="key file name in key_dir (required for claude; default 'deepinfra' for deepinfra)")
     s.add_argument("--dir"); s.add_argument("--provider", default="claude", choices=list(PROVIDERS))
     s.add_argument("--budget", type=float, default=50.0); s.add_argument("--target", type=float, default=30.0)
     P = dict(nargs="?", help="project name (optional with --dir/--pwd)")

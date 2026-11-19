@@ -16,8 +16,9 @@ These go **before** the command, like `ssh -p`:
 
 ## Project setup
 
-**`init <proj> --keyname <name> [--dir D] [--provider claude] [--budget 50] [--target 30]`**
-Register a project. `--dir` defaults to `~/api-batch-projects/<proj>`. `--keyname` is the key file's
+**`init <proj> --keyname <name> [--dir D] [--provider claude|deepinfra] [--budget 50] [--target 30]`**
+Register a project. `--provider` is fixed for the life of the project: `claude` (Anthropic, the
+default) or `deepinfra`. With `deepinfra`, `--keyname` is optional and defaults to `deepinfra`. `--dir` defaults to `~/api-batch-projects/<proj>`. `--keyname` is the key file's
 name without `.key` (or a full path). Budget and target are US dollars, summed over every batch the
 project ever ran.
 
@@ -47,11 +48,14 @@ Run options:
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `--model` | `opus` | `opus`, `sonnet`, `haiku`, `fable` (newest Fable, now 5.2), `fable51`, or a full model id |
-| `--effort` | `medium` | `low` `medium` `high` `xhigh` `max` — mostly moves output (thinking) tokens |
+| `--model` | `opus` | `opus`, `sonnet`, `haiku`, `fable` (newest Fable, now 5.2), `fable51`, or a full model id. On a DeepInfra project the default is `flash`; `dspro` and any full DeepInfra model id also work |
+| `--effort` | `medium` | `low` `medium` `high` `xhigh` `max` — mostly moves output (thinking) tokens. Claude only; ignored on a DeepInfra project |
 | `--max-tokens` | `16000` | per-answer ceiling; also the worst-case assumption |
-| `--web` | `0` | allow up to N web searches per question (server-side tool); results add input tokens the estimate cannot see |
-| `--now` | off | standard tier: run each request immediately through the normal endpoint at full price (2× batch); results land at once, no `collect` needed |
+| `--web` | `0` | allow up to N web searches per question (server-side tool); results add input tokens the estimate cannot see. Claude only; refused on a DeepInfra project |
+| `--now` | off | standard tier: run each request immediately through the normal endpoint at full price (2× batch at Anthropic, 1.25× at DeepInfra); results land at once, no `collect` needed |
+
+On a DeepInfra project the input must be text (`.md`, `.txt`), and the token count in `estimate` is
+approximate (characters / 3), because that provider has no token-counting endpoint.
 
 ## Results
 
@@ -94,3 +98,6 @@ Exact input token count (per file when several) and the price at the standard ra
 also at the batch rate. Output is a ceiling (`--max-tokens`), since the answer's length is unknown
 until it exists. Uses the free token-counting endpoint only. Shares `key_dir` with api-batch;
 `API_COST_KEY=<name>` sets the default key.
+
+With `--model flash`, `--model dspro` or a full DeepInfra model id, the count is approximate
+(characters / 3, text files only), the batch rate is 20 percent off, and no key is needed.

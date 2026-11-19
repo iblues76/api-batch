@@ -1,15 +1,15 @@
 # api-batch
 
-Send a list of independent questions to a model's **batch API**, where every token costs half the
-normal price, and get the answers back with the cost of each one written down.
+Send a list of independent questions to a model's **batch API**, where every token costs less than
+the normal price (half at Anthropic, 20 percent less at DeepInfra), and get the answers back with the cost of each one written down.
 
 You give it a document and the questions. It tells you the worst case the run can cost, refuses to go
 over the budget you set, and keeps a ledger per project. Projects have names, so you never type paths
 twice, and the same commands work on another machine over SSH.
 
-**Version 0.2.2.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
-virtual environment on first run). The only provider today is Anthropic (Claude); the provider sits
-behind a small class so another can be added. Works on macOS and Linux with Python 3.10+.
+**Version 0.3.0.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
+virtual environment on first run). Two providers: Anthropic (Claude, the default) and DeepInfra (DeepSeek
+and the other models in its catalog); each sits behind a small class, so another can be added. Works on macOS and Linux with Python 3.10+.
 
 ## Install
 
@@ -55,7 +55,7 @@ while its batch runs and `!` when it has ended and is waiting for `collect`.
 
 | Command | Billed? | What it does |
 | --- | --- | --- |
-| `init <proj> --keyname <k> [--dir D] [--budget 50] [--target 30]` | no | register a project |
+| `init <proj> --keyname <k> [--provider claude\|deepinfra] [--dir D] [--budget 50] [--target 30]` | no | register a project |
 | `add <proj> <file>…` | no | put a document in `input/` (docx converted via pandoc) |
 | `ask <proj> "q" … \| -f file` | no | append questions |
 | `questions <proj>` | no | list them |
@@ -75,6 +75,33 @@ while its batch runs and `!` when it has ended and is waiting for `collect`.
 Options for `estimate` / `submit` / `synth`: `--model opus|sonnet|haiku|fable|fable51` (`fable` is always the newest Fable, now 5.2; or a full model id),
 `--effort low|medium|high|xhigh|max`, `--max-tokens N` (default 16000), `--web N` (web search, at most
 N searches per question; off by default), `--now` (standard tier instead of batch).
+
+## DeepInfra: DeepSeek and other models
+
+A project belongs to one provider, chosen at `init`. With `--provider deepinfra` the same commands run
+through DeepInfra's OpenAI-compatible Batch API, where a batch costs 20 percent less than the normal
+price.
+
+```sh
+mkdir -p ~/.config/api-batch/keys
+(umask 077; read -rs -p "DeepInfra key: " k && printf '%s' "$k" > ~/.config/api-batch/keys/deepinfra.key; unset k); echo
+api-batch init     notes --provider deepinfra --budget 5     # the key file is deepinfra.key; no --keyname needed
+api-batch add      notes background.md
+api-batch ask      notes "Summarize the open problems."
+api-batch estimate notes                                     # default model: flash
+api-batch estimate notes --model dspro --max-tokens 4000
+```
+
+- `--model flash` is `deepseek-ai/DeepSeek-V4.1-Flash-1017` (the default), `--model dspro` is
+  `deepseek-ai/DeepSeek-V4-Pro-0813`. Any full model id from the DeepInfra catalog works too; a batch
+  uses one model.
+- Prices are read from DeepInfra's public model list when you run `estimate` or `submit`. A model
+  with no token price there is refused, so the budget guard never works from a guess.
+- **The estimate is approximate.** DeepInfra has no token-counting endpoint, so the input is counted
+  as characters divided by 3, and the output says so. `estimate` needs no key; `submit`, `status`,
+  `collect` and `cancel` do.
+- Text only: `.md` and `.txt` in `input/`. `--effort` is ignored and `--web` is refused.
+- `api-cost --model flash notes.md` gives the same approximate figure for any text file.
 
 ## api-cost: what would this prompt cost?
 
@@ -109,7 +136,8 @@ machine.
 
 ## Cost
 
-Costs are estimates from the provider's list prices with the batch discount applied; the provider's
+Costs are estimates from the provider's list prices with the batch discount applied (50 percent at
+Anthropic, 20 percent at DeepInfra); the provider's
 own console is the number that counts. `estimate` assumes every answer uses all of `max_tokens` and
 nothing is cached, so the real cost is usually well below it. With `--web`, the search results are
 extra input tokens the estimate cannot see: pilot two or three questions first.

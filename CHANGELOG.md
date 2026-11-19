@@ -3,6 +3,21 @@
 What changed in each release, newest first. Every release is a git tag (`v0.1.0`) and a tarball on
 the [download page](https://api-batch.software.nuilab.org/download/).
 
+## 0.3.0 — 2026-11-19
+
+- **DeepInfra provider**: `init <proj> --provider deepinfra` runs the project through DeepInfra's
+  OpenAI-compatible Batch API (20 percent off the normal price). Every other command is unchanged.
+- Model aliases `flash` (`deepseek-ai/DeepSeek-V4.1-Flash-1017`, the default for this provider) and
+  `dspro` (`deepseek-ai/DeepSeek-V4-Pro-0813`); any full DeepInfra model id is accepted. Prices come
+  from DeepInfra's public model list, and a model with no known price is refused.
+- The DeepInfra estimate is approximate (characters / 3), because that provider has no
+  token-counting endpoint; the output is labelled. `--effort` is ignored, `--web` is refused, and
+  input is text only.
+- The key file is `deepinfra.key` in `key_dir`; `init` needs no `--keyname` for this provider, and
+  `estimate` works before the key exists.
+- `api-cost --model flash|dspro|<model id>` gives the same approximate estimate without a key.
+- The batch discount is now a property of the provider; Claude projects behave as before.
+
 ## 0.2.2 — 2026-11-09
 
 - **`fable` now means Claude Fable 5.2** (`claude-fable-5-2`) in both `api-batch` and `api-cost`.

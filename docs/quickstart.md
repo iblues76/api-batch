@@ -80,6 +80,18 @@ api-batch show thesis q03    # one of them
 Answers are in `runs/<timestamp>/qNN.md`, headed by the question. `usage.csv` has the token counts and
 the estimated cost per question; `runs/ledger.csv` has one line per batch.
 
+## Another provider: DeepInfra
+
+The steps are the same with one flag at `init`. Save the key as `deepinfra.key` in the key folder, then:
+
+```sh
+api-batch init notes --provider deepinfra --budget 5
+api-batch estimate notes                  # default model: flash (DeepSeek V4.1 Flash); --model dspro for V4 Pro
+```
+
+The estimate is approximate there (characters / 3) and the batch discount is 20 percent. Input is text
+only, and `--effort` and `--web` do not apply.
+
 ## 7. A second round
 
 ```sh

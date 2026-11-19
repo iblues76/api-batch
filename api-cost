@@ -7,6 +7,9 @@
   api-cost --compare prompt.md               # standard vs batch side by side
   echo "text" | api-cost -                   # from stdin
 
+  api-cost --model flash --compare prompt.md # DeepInfra (flash, dspro, or a full model id): APPROXIMATE,
+                                             #   characters / 3, text inputs only, needs no key; batch = 20% off
+
 Never sends a real request. The provider's token counter is free; output tokens cannot be known in
 advance, so the output side is shown as the ceiling set by --max-tokens.
 Key: <key_dir>/<keyname>.key, mode 600, read at run time, never printed (shares api-batch's config:
@@ -37,6 +40,10 @@ PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0),
           "claude-haiku-5-5": (0.10, 0.50), "claude-fable-5-2": (8.0, 40.0),
           "claude-fable-5-1": (10.0, 50.0)}   # USD per MTok, in/out
 CFG = Path.home() / ".config/api-batch/config.json"
+# DeepInfra: no token-count endpoint, so the input is estimated from characters. Keep in step with api-batch.
+DI_ALIASES = {"flash": "deepseek-ai/DeepSeek-V4.1-Flash-1017", "dspro": "deepseek-ai/DeepSeek-V4-Pro-0813"}
+DI_PRICES = {"deepseek-ai/DeepSeek-V4.1-Flash-1017": (0.20, 0.60), "deepseek-ai/DeepSeek-V4-Pro-0813": (1.30, 2.60)}
+DI_BATCH = 0.8
 
 
 def die(m):
@@ -68,6 +75,44 @@ def block(path):
     return f.name, {"type": "text", "text": f.read_text(errors="replace")}
 
 
+def deepinfra(a, model):
+    """Approximate, key-free estimate for a DeepInfra model; price from the public model list, never guessed."""
+    import urllib.request
+    try:
+        req = urllib.request.Request("https://api.deepinfra.com/v1/openai/models", headers={"User-Agent": "api-cost"})
+        live = {m["id"]: (m.get("metadata") or {}).get("pricing") or {}
+                for m in json.loads(urllib.request.urlopen(req, timeout=15).read())["data"]}
+    except Exception:
+        live = None
+    pr = (live or {}).get(model, {})
+    if pr.get("input_tokens") is not None and pr.get("output_tokens") is not None:
+        i, o = float(pr["input_tokens"]), float(pr["output_tokens"])
+    elif live is None and model in DI_PRICES:
+        i, o = DI_PRICES[model]
+    else:
+        die(f"no known price for DeepInfra model '{model}' (aliases: {', '.join(DI_ALIASES)}; ids: https://deepinfra.com/models)")
+    parts = [block(x) for x in a.inputs]
+    bad = [n for n, b in parts if b["type"] != "text"]
+    if bad:
+        die(f"DeepInfra estimates are text only: {', '.join(bad)}")
+    per = {n: -(-len(b["text"]) // 3) for n, b in parts}
+    total = sum(per.values())
+    std_in, std_out = total * i / 1e6, a.max_tokens * o / 1e6
+    if a.json:
+        print(json.dumps({"model": model, "approximate": True, "input_tokens": total, "per_input": per, "max_output_tokens": a.max_tokens,
+                          "standard_usd": {"input": round(std_in, 4), "output_max": round(std_out, 4), "total_max": round(std_in + std_out, 4)},
+                          "batch_usd": {"input": round(std_in * DI_BATCH, 4), "output_max": round(std_out * DI_BATCH, 4),
+                                        "total_max": round((std_in + std_out) * DI_BATCH, 4)}}, indent=1))
+        return
+    detail = " · ".join(f"{n} ~{t:,}" for n, t in per.items()) if len(per) > 1 else ""
+    print(f"input ~{total:,} tok{' (' + detail + ')' if detail else ''}")
+    print(f"model {model} | max output {a.max_tokens:,} tok | list ${i:g}/${o:g} per MTok")
+    print(f"standard: input ${std_in:.4f} + output ≤ ${std_out:.2f} = ≤ ${std_in + std_out:.2f}")
+    if a.compare:
+        print(f"batch:    input ${std_in * DI_BATCH:.4f} + output ≤ ${std_out * DI_BATCH:.2f} = ≤ ${(std_in + std_out) * DI_BATCH:.2f}   (20% off, up to 24 h)")
+    print("(input is APPROXIMATE: characters / 3, DeepInfra has no token counter; output is the ceiling set by --max-tokens; reasoning counts as output)")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="api-cost", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", help="files (.md .txt .pdf .png .jpg) or - for stdin")
@@ -79,6 +124,8 @@ def main():
                     help="key file name in key_dir (default: $API_COST_KEY, then api-batch config default_key)")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
+    if a.model in DI_ALIASES or "/" in a.model:
+        return deepinfra(a, DI_ALIASES.get(a.model, a.model))
     model = ALIASES.get(a.model, a.model)
     if model not in PRICES:
         die(f"unknown model {model}; known: {', '.join(PRICES)} (or aliases {', '.join(ALIASES)})")

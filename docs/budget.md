@@ -28,13 +28,18 @@ worst case $2.02 | spent $0.00 | target $10 | budget $20
   `--max-tokens`, send fewer questions, or change the budget with a text editor in
   `~/.config/api-batch/config.json`.
 
+On a DeepInfra project there is no token-counting endpoint, so **input** is an approximation
+(characters divided by 3, shown with a `~`), the prices come from DeepInfra's public model list, and
+the batch discount is 20 percent. A model with no listed token price is refused.
+
 Web search is the one thing the estimate cannot see: each search returns results that count as input
 tokens, and their size depends on the pages. Pilot two or three questions and read the real cost from
 `collect` before scaling up.
 
 ## Batch or standard
 
-`--now` runs the same requests through the standard endpoint, right away, at twice the batch price.
+`--now` runs the same requests through the standard endpoint, right away, at twice the batch price
+(at DeepInfra, 1.25 times).
 The estimate and the guard use the standard rate when you pass it, and the ledger line says
 `kind: now`. Running a set of questions once each way is the cleanest measurement of what the batch
 discount buys you: same input, two costs, and the wait in the `minutes` column.

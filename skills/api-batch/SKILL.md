@@ -6,7 +6,7 @@ description: Use when a user wants to run many independent LLM questions cheaply
 # api-batch — batch LLM jobs with a budget and a ledger
 
 One Python file; `api-batch -h` lists everything. Docs: https://api-batch.software.nuilab.org.
-Source: https://github.com/iblues76/api-batch. Provider today: Anthropic Message Batches (50% off).
+Source: https://github.com/iblues76/api-batch. Providers: Anthropic Message Batches (50% off, the default) and DeepInfra (`init --provider deepinfra`, 20% off).
 
 ## What an agent may do freely (nothing billed)
 
@@ -22,6 +22,10 @@ show the user the number, **stop**.
 
 `api-cost [--compare] <files>` answers "what would this prompt cost" for anything outside a project
 (exact input tokens, output as a ceiling) — also free. Prefer it over asking a model to guess.
+
+DeepInfra projects: key file `deepinfra.key` (no `--keyname`), models `flash` (default), `dspro` or a
+full model id, text input only, no `--effort` or `--web`. Its `estimate` is approximate (characters / 3)
+and needs no key; say "approximate" when you report the number.
 
 ## What needs the user's explicit go, each time
 
