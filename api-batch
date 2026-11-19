@@ -14,6 +14,7 @@
   api-batch show     <proj> [q03]                # print the latest run's answers (or one)
   api-batch synth    <proj> "combine prompt"     # round 2: one request fed all collected answers
   api-batch ls [--all]                           # every project here (--all: + every trusted host)
+  api-batch models [--provider P] [--grep TEXT] [--all]   # FREE: models each provider offers, prices, aliases
   api-batch host add|rm|ls <alias>               # trusted hosts for --all and deploy
   api-batch deploy   <host>...                   # install this script + venv on trusted hosts
   api-batch -H <host> <any command>              # run the command on that host
@@ -27,7 +28,8 @@ is stored; the value is never printed or put on a command line.
 Model aliases: opus sonnet haiku fable (newest Fable, now 5.2) fable51. Costs are list-price ESTIMATES; the provider console is ground truth.
 
 deepinfra: aliases flash (deepseek-ai/DeepSeek-V4.1-Flash-1017, the default) and dspro
-(deepseek-ai/DeepSeek-V4-Pro-0813); any full DeepInfra model id is accepted too, one model per batch.
+(deepseek-ai/DeepSeek-V4-Pro-0813); any full DeepInfra model id is accepted too, one model per batch
+(`api-batch models --provider deepinfra --grep deepseek` lists them with prices; tags: vision = multimodal).
   - key file: <key_dir>/deepinfra.key (init needs no --keyname); only submit/status/collect/cancel read it
   - text input only (.md/.txt); --effort does not apply (ignored) and --web is refused
   - estimate is APPROXIMATE: no token-count endpoint, so input = characters / 3
@@ -125,6 +127,31 @@ class Claude:
             elif r.result.type == "errored":
                 row["stop"] = getattr(r.result.error, "type", "error")
             yield row
+
+    @classmethod
+    def catalog(cls, everything=False):
+        """(rows, notes) for `models`: the provider's free model list when a key is here, else the built-in table."""
+        alias = {}
+        for a, m in cls.aliases.items():
+            alias.setdefault(m, []).append(a)
+        row = lambda m, ctx, tags: (m, ",".join(alias.get(m, [])), cls.prices.get(m, (None, None))[0],
+                                    cls.prices.get(m, (None, None))[1], ctx, tags)
+        builtin = [row(m, None, "built-in table") for m in cls.prices]
+        name = cfg().get("default_key")
+        if not name:
+            return builtin, ["no default key set (api-batch config set default_key <name>): built-in alias table only"]
+        kf = key_path(name)
+        if not kf.is_file():
+            return builtin, [f"key file not found on this machine: {kf} — built-in alias table only"]
+        try:
+            rows = []
+            for m in cls(kf).c.models.list(limit=1000):
+                d = m.model_dump()
+                b = ((d.get("capabilities") or {}).get("batch") or {}).get("supported")
+                rows.append(row(d["id"], d.get("max_input_tokens"), {True: "batch", False: "no-batch"}.get(b, "")))
+            return rows, []
+        except anthropic.APIError as e:
+            return builtin, [f"could not list models ({type(e).__name__}) — built-in alias table only"]
 
     def cost(self, model, row, tier=BATCH):
         i, o, cr = self.prices[model]
@@ -226,6 +253,45 @@ class DeepInfra:
         except (OSError, ValueError):
             seen = {}
         return tuple(seen[model]) if model in seen else self.builtin.get(model)
+
+    @classmethod
+    def catalog(cls, everything=False):
+        """(rows, notes) for `models`, from DeepInfra's two public lists (no key): prices + context, and tags."""
+        import urllib.request
+
+        def get(url):
+            req = urllib.request.Request(url, headers={"User-Agent": "api-batch"})
+            return json.loads(urllib.request.urlopen(req, timeout=20).read())
+        alias = {}
+        for a, m in cls.aliases.items():
+            alias.setdefault(m, []).append(a)
+        try:
+            oai = get(cls.base_url + "/models")["data"]
+        except Exception as e:
+            return ([(m, ",".join(alias.get(m, [])), p[0], p[1], None, "built-in table") for m, p in cls.builtin.items()],
+                    [f"could not reach DeepInfra's model list ({type(e).__name__}) — built-in alias table only"])
+        try:
+            full = {m["model_name"]: m for m in get("https://api.deepinfra.com/models/list")}
+        except Exception:
+            full = {}
+        keep = {"tools": "tools", "multimodal": "vision", "vision": "vision", "vlm": "vision",   # vision = multimodal
+                "reasoning": "reason", "json": "json", "structured-output": "json", "prompt_cache": "cache"}
+        rows = []
+        for m in oai:
+            meta, extra = m.get("metadata") or {}, full.get(m["id"], {})
+            pr = meta.get("pricing") or {}
+            kind = extra.get("type") or ("text-generation" if "chat" in (meta.get("tags") or []) else "other")
+            if not everything and (kind != "text-generation" or pr.get("output_tokens") is None):
+                continue
+            have = {keep[t] for t in list(extra.get("tags") or []) + list(meta.get("tags") or []) if t in keep}
+            tags = [t for t in ("tools", "vision", "reason", "json", "cache") if t in have]
+            if everything and kind != "text-generation":
+                tags.insert(0, kind)
+            if extra.get("deprecated"):
+                tags.append("deprecated")
+            rows.append((m["id"], ",".join(alias.get(m["id"], [])), pr.get("input_tokens"), pr.get("output_tokens"),
+                         meta.get("context_length") or extra.get("max_tokens"), " ".join(tags)))
+        return rows, []
 
     def model(self, m):
         m = self.aliases.get(m, m)
@@ -696,6 +762,42 @@ def cmd_ls(a):
         print("  * processing   ! ended, not collected")
 
 
+def cmd_models(a):
+    """Free: what each provider offers. Never needs a project; prints paths, never key material."""
+    usd = lambda x: "-" if x is None else f"{float(x):.3g}"
+    ctx = lambda n: "-" if not n else (f"{n / 1e6:.3g}M" if n >= 1e6 else f"{round(n / 1000)}k")
+    width = shutil.get_terminal_size((160, 24)).columns   # piped output is not clipped below 160
+    for name in ([a.provider] if a.provider else list(PROVIDERS)):
+        P = PROVIDERS[name]
+        rows, notes = P.catalog(a.all)
+        table = []
+        for m, al, i, o, c, tags in sorted(rows, key=lambda r: r[0].lower()):
+            both = i is not None and o is not None
+            line = (m, al, usd(i), usd(o), f"{usd(i * P.batch)}/{usd(o * P.batch)}" if both else "-", ctx(c), tags)
+            if not a.grep or a.grep.lower() in " ".join(line).lower():
+                table.append(line)
+        print(f"[{name}]  {len(table)} model{'s' * (len(table) != 1)}"
+              f"{' matching ' + repr(a.grep) if a.grep else ''} | $ per MTok list | batch = {round((1 - P.batch) * 100)}% off"
+              f" | default: {P.default_model}")
+        for n in notes:
+            print(f"  note: {n}")
+        head = ("model", "alias", "in", "out", "batch in/out", "ctx", "tags")
+        w = [max(len(r[k]) for r in [head] + table) for k in range(7)]
+        over = sum(w) + 12 - (width - 1)                # six 2-space gaps; fit the terminal by clipping
+        for col, floor in ((6, 19), (0, 40), (6, 1), (0, 16)):   # tags first, then long ids, then harder
+            cut = max(min(over, w[col] - floor), 0)
+            w[col] -= cut
+            over -= cut
+        clip = lambda t, n: t if len(t) <= n else t[:n - 1] + "…"
+        if not table:
+            print("  (none)\n")
+            continue
+        for r in [head] + table:
+            print("  ".join([clip(r[0], w[0]).ljust(w[0]), r[1].ljust(w[1]), r[2].rjust(w[2]), r[3].rjust(w[3]),
+                             r[4].rjust(w[4]), r[5].rjust(w[5]), clip(r[6], w[6])]).rstrip())
+        print()
+
+
 def cmd_host(a):
     c = cfg()
     if a.op == "ls":
@@ -815,6 +917,10 @@ def main():
     s = sp.add_parser("show"); s.add_argument("proj", **P); s.add_argument("qid", nargs="?", help="q01… (default: all answers of the run)")
     s = sp.add_parser("synth"); s.add_argument("proj", **P); s.add_argument("prompt"); run_opts(s)
     s = sp.add_parser("ls"); s.add_argument("--all", action="store_true"); s.add_argument("--no-legend", action="store_true", help=argparse.SUPPRESS)
+    s = sp.add_parser("models", help="list the models each provider offers (free)")
+    s.add_argument("--provider", choices=list(PROVIDERS), help="one provider (default: all)")
+    s.add_argument("--grep", metavar="TEXT", help="only rows containing TEXT (model id, alias or tag; case-insensitive)")
+    s.add_argument("--all", action="store_true", help="deepinfra: also non-text models (embeddings, images, …)")
     s = sp.add_parser("host"); s.add_argument("op", choices=["add", "rm", "ls"]); s.add_argument("alias", nargs="?")
     s = sp.add_parser("deploy"); s.add_argument("hosts", nargs="+")
     s = sp.add_parser("config"); s.add_argument("op", nargs="?", default="show", choices=["show", "set"])

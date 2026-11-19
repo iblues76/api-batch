@@ -80,6 +80,24 @@ off at `max_tokens`. Refuses to collect the same run twice.
 batch (`*` running, `!` ended and not collected), submit time, folder. `--all` appends the same table
 from every host in `host ls`.
 
+**`models [--provider claude|deepinfra] [--grep TEXT] [--all]`** — the models each provider offers.
+Free, and it needs no project. Columns: model id, alias, list price per million tokens in and out, the
+batch price, context length, tags.
+
+```
+[deepinfra]  2 models matching 'V4-Pro' | $ per MTok list | batch = 20% off | default: flash
+model                             alias   in  out  batch in/out    ctx  tags
+deepseek-ai/DeepSeek-V4-Pro               1.3  2.6     1.04/2.08  1.05M  tools reason json cache
+deepseek-ai/DeepSeek-V4-Pro-0813  dspro   1.3  2.6     1.04/2.08  1.05M  tools reason json cache
+```
+
+DeepInfra's list is public, so no key is needed; it shows text-generation models, and `--all` adds
+embeddings, image models and the rest. Tags: `tools`, `vision` (multimodal), `reason`, `json`, `cache`.
+The Claude list uses the free model listing with your default key (`config set default_key <name>`),
+marks models that support batches, and shows prices for the models the script has prices for. With
+no key on the machine it says so and prints the built-in alias table. `--grep` matches the id, alias
+or tags, ignoring case. The table is clipped to fit the terminal; piped output is not.
+
 **`host add|rm|ls <alias>`** — the SSH aliases `ls --all` and `deploy` use.
 
 **`deploy <alias>…`** — copy this script to `install_path` on each host, carry over `key_dir`,

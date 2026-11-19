@@ -3,6 +3,17 @@
 What changed in each release, newest first. Every release is a git tag (`v0.1.0`) and a tarball on
 the [download page](https://api-batch.software.nuilab.org/download/).
 
+## 0.4.0 — 2026-11-19
+
+- **`models [--provider claude|deepinfra] [--grep TEXT] [--all]`**: a free table of the models each
+  provider offers, with the list price per million tokens in and out, the batch price, the context
+  length, tags, and the alias (`opus`, `flash`, …) beside the model it points to.
+- DeepInfra rows come from its public model list and need no key; text-generation models by default,
+  `--all` adds the rest. Tags: `tools`, `vision` (multimodal), `reason`, `json`, `cache`.
+- Claude rows come from the provider's free model listing with the default key, and show whether a
+  model supports batches. Without a key on the machine it says so and prints the built-in table.
+- The table is clipped to the terminal width; piped output is not clipped.
+
 ## 0.3.0 — 2026-11-19
 
 - **DeepInfra provider**: `init <proj> --provider deepinfra` runs the project through DeepInfra's

@@ -89,7 +89,8 @@ api-batch init notes --provider deepinfra --budget 5
 api-batch estimate notes                  # default model: flash (DeepSeek V4.1 Flash); --model dspro for V4 Pro
 ```
 
-The estimate is approximate there (characters / 3) and the batch discount is 20 percent. Input is text
+`api-batch models --provider deepinfra --grep deepseek` lists the models you can pass to `--model`, with
+their prices. The estimate is approximate there (characters / 3) and the batch discount is 20 percent. Input is text
 only, and `--effort` and `--web` do not apply.
 
 ## 7. A second round

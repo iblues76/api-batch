@@ -16,6 +16,7 @@ api-batch add  <proj> doc.docx|doc.md|img.png        # docx → md + images via 
 api-batch ask  <proj> "question" … | -f file.txt
 api-batch estimate <proj> [--model opus|sonnet|haiku|fable|fable51 --effort medium --max-tokens 16000 --web N]
 api-batch status | collect | show <proj> [qNN] | ls [--all]
+api-batch models [--provider claude|deepinfra] [--grep TEXT]    # models on offer, prices, aliases
 ```
 `estimate` uses the free token-count endpoint and prints the worst case against the budget. Run it,
 show the user the number, **stop**.

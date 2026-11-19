@@ -7,7 +7,7 @@ You give it a document and the questions. It tells you the worst case the run ca
 over the budget you set, and keeps a ledger per project. Projects have names, so you never type paths
 twice, and the same commands work on another machine over SSH.
 
-**Version 0.3.0.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
+**Version 0.4.0.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
 virtual environment on first run). Two providers: Anthropic (Claude, the default) and DeepInfra (DeepSeek
 and the other models in its catalog); each sits behind a small class, so another can be added. Works on macOS and Linux with Python 3.10+.
 
@@ -68,6 +68,7 @@ while its batch runs and `!` when it has ended and is waiting for `collect`.
 | `show <proj> [qNN]` | no | print the latest run's answers (or one) |
 | `synth <proj> "prompt" [opts]` | **yes** | one request fed every collected answer |
 | `ls [--all]` | no | projects here (and on every host in `host ls`) |
+| `models [--provider P] [--grep TEXT] [--all]` | no | the models each provider offers, with prices, batch prices and aliases |
 | `host add\|rm\|ls <alias>` | no | machines for `ls --all` |
 | `deploy <alias>…` | no | copy this script and its settings to other machines |
 | `config [show \| set k v]` | no | `key_dir`, `install_path`, `notify.url`, `notify.token_file` |
@@ -95,6 +96,7 @@ api-batch estimate notes --model dspro --max-tokens 4000
 - `--model flash` is `deepseek-ai/DeepSeek-V4.1-Flash-1017` (the default), `--model dspro` is
   `deepseek-ai/DeepSeek-V4-Pro-0813`. Any full model id from the DeepInfra catalog works too; a batch
   uses one model.
+- `api-batch models --provider deepinfra --grep deepseek` lists what is on offer, with the price of each.
 - Prices are read from DeepInfra's public model list when you run `estimate` or `submit`. A model
   with no token price there is refused, so the budget guard never works from a guess.
 - **The estimate is approximate.** DeepInfra has no token-counting endpoint, so the input is counted
