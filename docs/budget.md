@@ -1,12 +1,10 @@
 # Budget, estimate and ledger
 
-Three numbers protect you, in this order.
+Three numbers keep the cost of a project under control: the provider's spend limit, the estimate, and the ledger.
 
 ## The provider's spend limit
 
-Set it in the provider's console, on a workspace made for the project. It is enforced by the provider
-and stops billing no matter what any program on your side does. Everything below only makes you fail
-earlier and more politely.
+Set it in the provider's console, on a workspace made for the project. The provider enforces it, and it stops billing whatever any program on your side does. The estimate and the budget only stop a run earlier, before it is submitted.
 
 ## The estimate
 
@@ -33,21 +31,18 @@ On a DeepInfra project there is no token-counting endpoint, so **input** is an a
 the batch discount is 20 percent. A model with no listed token price is refused.
 
 Web search is the one thing the estimate cannot see: each search returns results that count as input
-tokens, and their size depends on the pages. Pilot two or three questions and read the real cost from
-`collect` before scaling up.
+tokens, and their size depends on the pages. Try two or three questions and read the real cost from `collect` before you send many.
 
 ## Batch or standard
 
 `--now` runs the same requests through the standard endpoint, right away, at twice the batch price
 (at DeepInfra, 1.25 times).
 The estimate and the guard use the standard rate when you pass it, and the ledger line says
-`kind: now`. Running a set of questions once each way is the cleanest measurement of what the batch
-discount buys you: same input, two costs, and the wait in the `minutes` column.
+`kind: now`. To measure what the batch discount saves, run the same set of questions once each way. The ledger then has two lines with the same input, their two costs, and the time each took in the `minutes` column.
 
 ## The ledger
 
-`collect` computes the cost of each succeeded request from its reported usage — input, output, cache
-reads and cache writes at their own rates, plus any web searches — and writes:
+`collect` computes the cost of each request that succeeded from the usage the provider reports (input, output, cache reads and cache writes at their own rates, plus any web searches) and writes:
 
 - `runs/<timestamp>/usage.csv`, one line per request;
 - `runs/ledger.csv`, one line per batch: `date, batch_id, kind, model, requests, cost_usd, minutes`.
@@ -56,13 +51,11 @@ reads and cache writes at their own rates, plus any web searches — and writes:
 not a per-run one. `ls` shows `spent/budget` per project.
 
 All of these are estimates. Prices change, and the provider may bill a cancelled request that had
-already started. The provider's usage page for the workspace is the ground truth; compare it to the
-ledger from time to time.
+already started. The provider's usage page for the workspace has the real amounts. Compare it with the ledger from time to time.
 
 ## What a real run looked like
 
 A two-page document with two screenshots, one question ("follow the instructions in the document"),
 Claude Fable 5.1 at medium effort. The estimate said $0.42 worst case. The batch finished in two
 minutes and cost $0.15: 30 input tokens, 3,578 cache-write tokens, 5,032 output tokens, for a
-1,500-word answer. The same request run a second time cost $0.09 and came back 20% shorter, which is
-a useful reminder that one run is one sample.
+1,500-word answer. The same request, run a second time, cost $0.09 and its answer was 20% shorter. One run is one sample.

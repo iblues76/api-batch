@@ -1,15 +1,10 @@
 # api-batch
 
-Send a list of independent questions to a model's **batch API**, where every token costs less than
-the normal price (half at Anthropic, 20 percent less at DeepInfra), and get the answers back with the cost of each one written down.
+api-batch sends a list of independent questions to a model's batch API, where tokens cost less than the normal price (half at Anthropic, 20 percent less at DeepInfra). It brings back the answers and records what each one cost.
 
-You give it a document and the questions. It tells you the worst case the run can cost, refuses to go
-over the budget you set, and keeps a ledger per project. Projects have names, so you never type paths
-twice, and the same commands work on another machine over SSH.
+You give it a document and the questions. Before anything is billed, it shows the most the run can cost, and it refuses to submit a run that would go over the budget you set. It keeps a cost ledger for each project. Projects have names, so you do not type their paths again, and the same commands work on another machine over SSH.
 
-**Version 0.4.0.** Two Python files (`api-batch` and the free estimator `api-cost`), no dependencies beyond the provider SDK (it creates its own
-virtual environment on first run). Two providers: Anthropic (Claude, the default) and DeepInfra (DeepSeek
-and the other models in its catalog); each sits behind a small class, so another can be added. Works on macOS and Linux with Python 3.10+.
+**Version 0.4.0.** api-batch is two Python files: `api-batch` itself, and `api-cost`, which estimates what a prompt would cost and is free to run. It needs nothing besides the provider's SDK, and it creates its own virtual environment the first time it runs. It works with two providers: Anthropic (Claude), which is the default, and DeepInfra (DeepSeek and the other models in its catalog). Each provider is a small class in the code, so another can be added. It runs on macOS and Linux with Python 3.10 or later.
 
 ## Install
 
@@ -26,9 +21,9 @@ mkdir -p ~/.config/api-batch/keys
 (umask 077; read -rs -p "API key: " k && printf '%s' "$k" > ~/.config/api-batch/keys/research.key; unset k); echo
 ```
 
-Nothing ever prints the key: `api-batch` stores the file's *name* and reads the file when it runs.
+The key is never printed. `api-batch` stores the name of the key file and reads the file when it runs.
 
-Optional: `pandoc`, for `add` to convert `.docx` documents.
+`pandoc` is optional. `add` uses it to convert `.docx` documents.
 
 ## Quick start
 
@@ -44,9 +39,7 @@ api-batch show     thesis                                # read the latest run's
 api-batch synth    thesis "Combine the answers into a two-page summary"
 ```
 
-Need the answers in minutes rather than hours? `submit --now` runs the same questions through the
-standard endpoint at the normal price (2× the batch rate), with the same budget check and the same
-ledger, so a batch-versus-standard comparison is just two lines in `runs/ledger.csv`.
+If you need the answers in minutes and not hours, use `submit --now`. It runs the same questions through the standard endpoint at the normal price (2× the batch rate), with the same budget check and the same ledger. To compare batch with standard, run both and read the two lines in `runs/ledger.csv`.
 
 A batch usually finishes within an hour (the provider allows up to 24). `ls` marks a project `*`
 while its batch runs and `!` when it has ended and is waiting for `collect`.
@@ -105,9 +98,9 @@ api-batch estimate notes --model dspro --max-tokens 4000
 - Text only: `.md` and `.txt` in `input/`. `--effort` is ignored and `--web` is refused.
 - `api-cost --model flash notes.md` gives the same approximate figure for any text file.
 
-## api-cost: what would this prompt cost?
+## api-cost: the cost of a prompt before you send it
 
-For anything you are about to send through some other path (a script, a notebook, another tool):
+`api-cost` estimates the cost of a prompt that you plan to send another way, for example from a script, a notebook or another tool:
 
 ```sh
 api-cost --keyname research prompt.md doc.pdf shot.png     # exact input tokens, per file, and the price
@@ -115,9 +108,7 @@ api-cost --keyname research --compare prompt.md           # standard vs batch si
 echo "some text" | api-cost --keyname research -           # from stdin
 ```
 
-It uses the provider's free token counter and never sends a real request. Input is exact; output is
-shown as the ceiling set by `--max-tokens`, because nobody knows the answer's length in advance.
-Set `API_COST_KEY=research` to skip `--keyname`.
+It uses the provider's free token counter and never sends a real request. The input count is exact. The output is shown as the ceiling set by `--max-tokens`, because the length of the answer is not known in advance. Set `API_COST_KEY=research` to skip `--keyname`.
 
 Global options, before the command: `--dir PATH` or `--pwd` selects the project by folder instead of
 name; `--run <timestamp-prefix>` addresses an earlier run; `-H <host>` runs the command on another
@@ -138,14 +129,9 @@ machine.
 
 ## Cost
 
-Costs are estimates from the provider's list prices with the batch discount applied (50 percent at
-Anthropic, 20 percent at DeepInfra); the provider's
-own console is the number that counts. `estimate` assumes every answer uses all of `max_tokens` and
-nothing is cached, so the real cost is usually well below it. With `--web`, the search results are
-extra input tokens the estimate cannot see: pilot two or three questions first.
+Costs are estimates. They use the provider's list prices with the batch discount applied (50 percent at Anthropic, 20 percent at DeepInfra). The amounts in the provider's own console are the real ones. `estimate` assumes that every answer uses all of `max_tokens` and that nothing is cached, so the real cost is usually well below it. With `--web`, the search results are extra input tokens that the estimate cannot see, so try two or three questions first.
 
-Docs: [quickstart](docs/quickstart.md) · [commands](docs/commands.md) · [budget and ledger](docs/budget.md) ·
-[remote](docs/remote.md) · [secrets](docs/secrets.md) · [changelog](CHANGELOG.md).
+See also the [quickstart](docs/quickstart.md), the [commands](docs/commands.md), [budget and ledger](docs/budget.md), [other machines](docs/remote.md), [keeping the key safe](docs/secrets.md), and the [changelog](CHANGELOG.md).
 
 ## License
 

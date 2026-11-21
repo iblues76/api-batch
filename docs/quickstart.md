@@ -1,12 +1,11 @@
 # Quickstart
 
-From an empty folder to a collected answer. Only one step bills anything, and it says so.
+This page goes through a first run, from an empty folder to the collected answers. Only one step costs money, and it is marked.
 
 ## 1. A key, in a file
 
 Make a key in your provider's console. For Anthropic, create a **workspace** for the project first and
-give it a monthly spend limit, then create the key inside that workspace; the limit is the hard
-backstop no matter what any program does.
+give it a monthly spend limit, then create the key inside that workspace. The provider enforces that limit whatever any program does.
 
 Save the key where only you can read it. Type it at a hidden prompt rather than pasting it into a
 command, so it never lands in your shell history:
@@ -55,8 +54,7 @@ thesis: 12 questions | input 48,120 tok | model claude-opus-5-5 effort medium ma
 worst case $2.02 | spent $0.00 | target $10 | budget $20
 ```
 
-Worst case means every answer uses all of `max_tokens` and nothing is cached. Real runs come in well
-under it. The same flags apply to `submit`, so try a few settings here.
+Worst case means that every answer uses all of `max_tokens` and nothing is cached. A real run costs well below it. The same flags apply to `submit`, so try a few settings here.
 
 ## 5. Submit (bills)
 
@@ -65,8 +63,7 @@ api-batch submit thesis --model opus --effort medium
 ```
 
 It repeats the estimate, refuses if `spent + worst case` passes the budget, then submits and prints the
-batch id. If a person other than you is running the agent that got you here, this is the step a human
-should run.
+batch id. If an agent is running these steps for you, this is the one step that a person should run.
 
 ## 6. Wait, collect, read
 
