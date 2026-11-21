@@ -36,11 +36,11 @@ Append questions to `questions.txt`. **`questions <proj>`** lists them with thei
 Count the input tokens of every request (free), print the worst case for this run, what the project has
 spent so far, and the target and budget. Exit code 1 if the run would pass the budget.
 
-**`submit <proj> [run options]`** — **bills**
-Everything `estimate` does, then create the batch. Refuses past the budget, warns past the target.
+**`submit <proj> [run options]`** (**bills**)
+Does everything `estimate` does, then creates the batch. Refuses past the budget, warns past the target.
 Writes `runs/<timestamp>/batch.json` with the batch id and the questions.
 
-**`synth <proj> "prompt" [run options]`** — **bills**
+**`synth <proj> "prompt" [run options]`** (**bills**)
 A one-request batch whose input is every `q*.md` of the latest run plus your prompt. Lands in its own
 `runs/<timestamp>/` with `kind: synth`.
 
@@ -49,7 +49,7 @@ Run options:
 | Option | Default | Notes |
 | --- | --- | --- |
 | `--model` | `opus` | `opus`, `sonnet`, `haiku`, `fable` (newest Fable, now 5.2), `fable51`, or a full model id. On a DeepInfra project the default is `flash`; `dspro` and any full DeepInfra model id also work |
-| `--effort` | `medium` | `low` `medium` `high` `xhigh` `max` — mostly moves output (thinking) tokens. Claude only; ignored on a DeepInfra project |
+| `--effort` | `medium` | `low` `medium` `high` `xhigh` `max`. It mostly changes the number of output (thinking) tokens. Claude only; ignored on a DeepInfra project |
 | `--max-tokens` | `16000` | per-answer ceiling; also the worst-case assumption |
 | `--web` | `0` | allow up to N web searches per question (server-side tool); results add input tokens the estimate cannot see. Claude only; refused on a DeepInfra project |
 | `--now` | off | standard tier: run each request immediately through the normal endpoint at full price (2× batch at Anthropic, 1.25× at DeepInfra); results land at once, no `collect` needed |
@@ -59,28 +59,34 @@ approximate (characters / 3), because that provider has no token-counting endpoi
 
 ## Results
 
-**`status <proj>`** — state of the latest batch: `in_progress` / `ended`, counts, minutes since submit.
+**`status <proj>`**
+Show the state of the latest batch: `in_progress` or `ended`, the counts, and the minutes since submit.
 
-**`cancel <proj>`** — cancel the latest batch (or `--run <ts>`) while it is `in_progress`. The run
+**`cancel <proj>`**
+Cancel the latest batch (or `--run <ts>`) while it is `in_progress`. The run
 folder becomes `…-canceled`. The provider stops requests that have not started; ones already running
 may finish and are billed, so once the batch reports `ended`, `--run <ts> collect` records them in
 the ledger. Refuses on a run that is already collected or ended, and on a `--now` run (that one is a
 local loop: Ctrl-C).
 
-**`collect <proj>`** — once ended: write `qNN.md` per succeeded request, `usage.csv` (status, stop
+**`collect <proj>`**
+Once the batch has ended, write `qNN.md` for each request that succeeded, `usage.csv` (status, stop
 reason, tokens in/out/cache, web searches, estimated cost), append one line to `runs/ledger.csv`, and
 send a notification if `notify.url` is configured. Lists requests that failed, were refused, or were cut
 off at `max_tokens`. Refuses to collect the same run twice.
 
-**`show <proj> [qNN]`** — print the latest run's answers, or one of them. Pipe to `less`.
+**`show <proj> [qNN]`**
+Print the latest run's answers, or one of them. Pipe the output to `less` to read it a page at a time.
 
 ## Fleet
 
-**`ls [--all]`** — every project on this machine: questions, runs, spent/budget, state of the latest
+**`ls [--all]`**
+List every project on this machine: questions, runs, spent/budget, state of the latest
 batch (`*` running, `!` ended and not collected), submit time, folder. `--all` appends the same table
 from every host in `host ls`.
 
-**`models [--provider claude|deepinfra] [--grep TEXT] [--all]`** — the models each provider offers.
+**`models [--provider claude|deepinfra] [--grep TEXT] [--all]`**
+List the models each provider offers.
 Free, and it needs no project. Columns: model id, alias, list price per million tokens in and out, the
 batch price, context length, tags.
 
@@ -98,13 +104,16 @@ marks models that support batches, and shows prices for the models the script ha
 no key on the machine it says so and prints the built-in alias table. `--grep` matches the id, alias
 or tags, ignoring case. The table is clipped to fit the terminal; piped output is not.
 
-**`host add|rm|ls <alias>`** — the SSH aliases `ls --all` and `deploy` use.
+**`host add|rm|ls <alias>`**
+Add, remove or list the SSH aliases that `ls --all` and `deploy` use.
 
-**`deploy <alias>…`** — copy this script to `install_path` on each host, carry over `key_dir`,
+**`deploy <alias>…`**
+Copy this script to `install_path` on each host, carry over `key_dir`,
 `install_path` and `notify.*`, and run `ls` there as a smoke test. The key files are **not** copied;
 each machine needs its own.
 
-**`config [show | set <key> <value>]`** — `key_dir` (default `~/.config/api-batch/keys`),
+**`config [show | set <key> <value>]`**
+Show or set `key_dir` (default `~/.config/api-batch/keys`),
 `install_path` (default `~/.local/bin/api-batch`), `notify.url` and `notify.token_file` (an
 ntfy-style endpoint that gets one line per collected batch). Paths under your home are stored with `~`
 so they carry to machines with a different home directory.
